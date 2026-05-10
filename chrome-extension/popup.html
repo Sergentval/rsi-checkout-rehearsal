@@ -19,6 +19,13 @@
         color: #6df2a9;
         letter-spacing: 0.04em;
       }
+      h2 {
+        margin: 12px 0 6px;
+        font-size: 11px;
+        color: #6df2a9;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
       .row {
         display: flex;
         justify-content: space-between;
@@ -47,6 +54,28 @@
         font-size: 11px;
         margin-top: 6px;
       }
+      label.toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        cursor: pointer;
+        user-select: none;
+      }
+      label.toggle input { margin: 0; accent-color: #00e676; }
+      label.toggle .desc { color: #d6e7ff; flex: 1; }
+      label.toggle .hint { color: #7ea0c2; font-size: 10px; }
+      #reset {
+        background: transparent;
+        color: #7ea0c2;
+        border: 1px solid #2c4566;
+        border-radius: 3px;
+        padding: 3px 8px;
+        font-size: 11px;
+        cursor: pointer;
+        margin-top: 6px;
+      }
+      #reset:hover { color: #fff; border-color: #6df2a9; }
     </style>
   </head>
   <body>
@@ -56,20 +85,27 @@
     <div class="row"><span class="k">Status</span><span class="v" id="status">—</span></div>
     <div class="row"><span class="k">Version</span><span class="v" id="version">—</span></div>
 
+    <h2>Toggles</h2>
+    <label class="toggle"><input type="checkbox" id="t-showPanel">       <span class="desc">Show overlay panel</span></label>
+    <label class="toggle"><input type="checkbox" id="t-highlightButtons"><span class="desc">Highlight buy buttons</span></label>
+    <label class="toggle"><input type="checkbox" id="t-paymentBanner">   <span class="desc">Payment-page warning banner</span></label>
+    <label class="toggle"><input type="checkbox" id="t-autoClickMax">    <span class="desc">Auto-click "Max credit" button</span></label>
+    <label class="toggle"><input type="checkbox" id="t-scAutofill">      <span class="desc">Store-credit input prefill (fallback)</span></label>
+    <label class="toggle"><input type="checkbox" id="t-measureLatency">  <span class="desc">Measure latency to RSI</span></label>
+    <button id="reset">Reset to defaults</button>
+
     <hr />
 
     <div class="row"><span class="k">Hotkeys</span></div>
     <div class="row"><span class="k">Focus next buy</span><span class="v"><kbd>F</kbd></span></div>
+    <div class="row"><span class="k">Click Max credit</span><span class="v"><kbd>M</kbd></span></div>
     <div class="row"><span class="k">Refresh panel</span><span class="v"><kbd>R</kbd></span></div>
     <div class="row"><span class="k">Hide / show</span><span class="v"><kbd>Esc</kbd></span></div>
 
-    <hr />
-
     <div class="note">
-      Content script runs on RSI pages only. Highlights buy buttons, shows
-      store-credit + cart total + latency, pre-fills the store-credit
-      amount input with the cart total on payment pages. Never clicks or
-      submits anything.
+      Toggles persist across browser sessions and apply instantly to any
+      open RSI tab. Default: all on. Never clicks Place Order or fills
+      payment-card fields.
     </div>
 
     <script src="popup.js"></script>

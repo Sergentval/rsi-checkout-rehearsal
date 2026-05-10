@@ -182,6 +182,27 @@ you're using a managed Chrome where extension loading is restricted.
 Hotkeys: **F** focus next buy button, **M** click Max-credit button on
 payment pages, **R** force refresh, **Esc** hide / show the overlay.
 
+### Toggles (extension only)
+
+Click the toolbar icon to open the popup. Six toggles control the script's
+features individually; settings persist via `chrome.storage.local` and apply
+instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
+
+| Toggle                              | What it controls                                          |
+| ----------------------------------- | --------------------------------------------------------- |
+| Show overlay panel                  | bottom-right info overlay (off → panel hidden, no work)   |
+| Highlight buy buttons               | pulsing green/orange button outlines                      |
+| Payment-page warning banner         | red "slow down" banner on `/checkout/payment`             |
+| Auto-click "Max credit" button      | clicks RSI's Max button once on payment-page entry        |
+| Store-credit input prefill          | regex-based fallback when RSI's Max button isn't present  |
+| Measure latency to RSI              | one HEAD request per refresh (off → no extra traffic)     |
+
+There's also a **Reset to defaults** button that flips everything back on.
+
+The userscript flavor doesn't have access to `chrome.storage` — userscript
+users always get the defaults (everything on). If you need per-feature
+toggles, use the extension flavor.
+
 ## Install
 
 ```bash

@@ -18,7 +18,7 @@
       "48":  "icons/icon-48.png"
     }
   },
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "storage"],
   "host_permissions": [
     "https://robertsspaceindustries.com/*",
     "https://*.robertsspaceindustries.com/*"

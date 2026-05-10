@@ -23,6 +23,47 @@
   //     misclick under pressure.
   // ----------------------------------------------------------------------
 
+  // -------- Settings ------------------------------------------------------
+  // All defaults true (current behavior). Persisted via chrome.storage.local
+  // when running as the extension. In userscript context (Tampermonkey /
+  // Violentmonkey) chrome.storage isn't available — we silently fall back
+  // to defaults and skip persistence.
+  const DEFAULT_SETTINGS = {
+    showPanel: true,         // bottom-right overlay
+    highlightButtons: true,  // pulsing green/orange button outlines
+    paymentBanner: true,     // red "slow down" banner on payment pages
+    autoClickMax: true,      // click RSI's "apply max credit" button on entry
+    scAutofill: true,        // regex-based store-credit input prefill (fallback)
+    measureLatency: true,    // HEAD request per refresh to time round-trip
+  };
+  const settings = { ...DEFAULT_SETTINGS };
+
+  function hasChromeStorage() {
+    try { return typeof chrome !== "undefined" && !!chrome.storage?.local; }
+    catch { return false; }
+  }
+
+  async function loadSettings() {
+    if (!hasChromeStorage()) return;
+    try {
+      const stored = await chrome.storage.local.get(DEFAULT_SETTINGS);
+      Object.assign(settings, stored);
+    } catch { /* ignore — keep defaults */ }
+  }
+
+  function watchSettings(onChange) {
+    if (!hasChromeStorage() || !chrome.storage.onChanged) return;
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area !== "local") return;
+      let touched = false;
+      for (const [k, v] of Object.entries(changes)) {
+        if (k in DEFAULT_SETTINGS) { settings[k] = v.newValue; touched = true; }
+      }
+      if (touched) onChange();
+    });
+  }
+  // ----------------------------------------------------------------------
+
   const BUY_PATTERNS = [
     /^\s*add to cart\s*$/i,
     /^\s*buy\b/i,
@@ -369,25 +410,40 @@
     if (el) el.textContent = value;
   }
 
+  function clearButtonHighlights() {
+    for (const el of document.querySelectorAll(".scr-buy-hi, .scr-checkout-hi")) {
+      el.classList.remove("scr-buy-hi", "scr-checkout-hi");
+    }
+  }
+
   function refresh() {
     injectStyle();
     const buttons = findBuyButtons();
-    highlightButtons(buttons);
+    if (settings.highlightButtons) highlightButtons(buttons);
+    else clearButtonHighlights();
 
     const buys = buttons.filter((b) => !b.isCheckout);
     const cos = buttons.filter((b) => b.isCheckout);
 
+    // Panel visibility — when off, hide and skip the rest of the panel work.
+    const existing = document.getElementById(PANEL_ID);
+    if (!settings.showPanel) {
+      if (existing) existing.style.display = "none";
+      state.buttons = buttons;
+      return;
+    }
+    if (existing) existing.style.display = "";
     ensurePanel();
 
     // Only attempt the store-credit prefill / Max click on payment-shaped
     // URLs. Outside those, leave the page alone — pre-filling on a random
-    // page could touch unrelated forms.
+    // page could touch unrelated forms. Each step gates on its own setting.
     const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
     if (isPaymentPage) {
-      // Try the Max button first (RSI's own affordance, more reliable). If it
-      // isn't on the page, fall back to the regex-based input prefill.
-      const maxApplied = tryClickMaxCredit();
-      if (!maxApplied) tryPrefillStoreCredit();
+      const maxApplied = settings.autoClickMax ? tryClickMaxCredit() : false;
+      if (!maxApplied && settings.scAutofill) tryPrefillStoreCredit();
+      if (!settings.autoClickMax) maxStatus = "disabled (toggle off)";
+      if (!settings.scAutofill && !maxApplied) prefillStatus = "disabled (toggle off)";
     } else {
       prefillStatus = "—";
       maxStatus = "—";
@@ -428,7 +484,8 @@
     let tip;
     if (isPaymentPage) {
       tip = "Payment page — read total carefully";
-      showBanner();
+      if (settings.paymentBanner) showBanner();
+      else { const b = document.getElementById(BANNER_ID); if (b) b.remove(); }
     } else if (pledge?.isWarbond) {
       tip = "WARBOND page — fresh money required";
     } else if (buys.length > 0) {
@@ -474,6 +531,17 @@
   });
   obs.observe(document.body, { childList: true, subtree: true });
 
-  measureLatency().then(refresh);
-  setInterval(refresh, 3000);
+  // Boot: load persisted settings before first render so we don't flash the
+  // default-on UI for users who toggled things off. Then start the latency
+  // probe (only if enabled) and the refresh interval.
+  (async () => {
+    await loadSettings();
+    watchSettings(() => refresh());
+    if (settings.measureLatency) await measureLatency();
+    refresh();
+    setInterval(() => {
+      if (settings.measureLatency) measureLatency().then(refresh);
+      else refresh();
+    }, 3000);
+  })();
 })();
