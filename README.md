@@ -62,6 +62,12 @@ sudo systemctl enable --now sc-drop-watcher
 journalctl -u sc-drop-watcher -f
 ```
 
+The unit's `ExecStart` is pinned to the current nvm-managed node binary
+(`/home/ubuntu/.nvm/versions/node/v24.13.1/bin/node`) and invokes `tsx` via
+its in-repo entry point (`node_modules/tsx/dist/cli.mjs`). After upgrading
+Node via nvm, update the node path in the unit file and
+`sudo systemctl daemon-reload && sudo systemctl restart sc-drop-watcher`.
+
 ## Push targets
 
 - **Discord**: rich embed with title, fields, link.
