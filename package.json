@@ -1,0 +1,25 @@
+{
+  "name": "sc-drop-watcher",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Personal RSI store / comm-link / ship-matrix drop notifier. Read-only polling, push to Discord+ntfy.",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node --enable-source-maps dist/main.js",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test --import tsx tests/*.test.ts"
+  },
+  "dependencies": {
+    "node-html-parser": "^6.1.13"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.4"
+  }
+}

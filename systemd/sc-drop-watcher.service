@@ -1,0 +1,33 @@
+[Unit]
+Description=sc-drop-watcher — RSI store / comm-link drop notifier
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/projects/sc-drop-watcher
+EnvironmentFile=/home/ubuntu/projects/sc-drop-watcher/.env
+ExecStart=/usr/bin/npx tsx src/main.ts
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+# Hardening — this is a read-only HTTP client, no need for FS write outside its dir.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ubuntu/projects/sc-drop-watcher
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6
+LockPersonality=true
+MemoryDenyWriteExecute=false
+RestrictRealtime=true
+
+[Install]
+WantedBy=multi-user.target

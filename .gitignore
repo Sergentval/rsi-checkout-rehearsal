@@ -1,0 +1,6 @@
+.env
+.state.json
+.state.json.tmp
+node_modules/
+dist/
+.DS_Store
