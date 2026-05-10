@@ -100,7 +100,11 @@ export async function fetchCommLink(opts: FetchOptions): Promise<DropEvent[]> {
     const id = m[1]!;
     const slug = m[2]!;
     if (out.some((e) => e.id === id)) continue;
-    const title = (a.text || slug.replace(/-/g, " ")).trim().slice(0, 200);
+    // Comm-link cards include card metadata (comment count, posted-ago,
+    // excerpt) as inline text inside the same anchor, so a.text yields a
+    // multi-line garbled string. The slug is always a clean kebab-case title
+    // suitable for direct display.
+    const title = slug.replace(/-/g, " ").slice(0, 200);
     out.push({
       source: "comm-link",
       id,
