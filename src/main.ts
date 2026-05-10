@@ -9,12 +9,14 @@ import {
 } from "./sources.js";
 import { notify, type PushTargets } from "./push.js";
 import { calendarTicks } from "./calendar.js";
+import { parseWatchlist, matchWatchlist, type WatchEntry } from "./watchlist.js";
 
 interface Config {
   readonly stateFile: string;
   readonly userAgent: string;
   readonly intervals: Record<DropEvent["source"], number>;
   readonly push: PushTargets;
+  readonly watchlist: ReadonlyArray<WatchEntry>;
 }
 
 interface State {
@@ -53,6 +55,7 @@ function readEnv(): Config {
       userAgent,
       live,
     },
+    watchlist: parseWatchlist(e.WATCHLIST),
   };
 }
 
@@ -120,11 +123,22 @@ async function pollOnce(
   const removedIds = [...previous].filter((id) => !current.has(id));
 
   for (const ev of added) {
-    await notify(cfg.push, {
-      kind: "new",
-      event: ev,
-      message: `New ${ev.source} item: ${ev.title}\n${ev.url}`,
-    });
+    const match = matchWatchlist(cfg.watchlist, ev);
+    if (match) {
+      await notify(cfg.push, {
+        kind: "watchlist",
+        event: ev,
+        message:
+          `🔔 WATCHLIST MATCH: "${match.ship}" (${match.mode})\n` +
+          `${ev.source}: ${ev.title}\n${ev.url}`,
+      });
+    } else {
+      await notify(cfg.push, {
+        kind: "new",
+        event: ev,
+        message: `New ${ev.source} item: ${ev.title}\n${ev.url}`,
+      });
+    }
   }
   // Removals from pledge-store are signal too (sale ended); ship-matrix removals
   // are noisy (ships toggled off). Only push removals for pledge-store.
@@ -189,9 +203,13 @@ async function loop(source: DropEvent["source"], cfg: Config, state: State): Pro
 async function main(): Promise<void> {
   const cfg = readEnv();
   const state = await loadState(cfg.stateFile);
+  const wlSummary = cfg.watchlist.length === 0
+    ? "none"
+    : cfg.watchlist.map((w) => `${w.ship}:${w.mode}`).join(",");
   console.log(
     `sc-drop-watcher starting :: live=${cfg.push.live} ` +
-      `discord=${Boolean(cfg.push.discordWebhookUrl)} ntfy=${Boolean(cfg.push.ntfyTopicUrl)}`,
+      `discord=${Boolean(cfg.push.discordWebhookUrl)} ntfy=${Boolean(cfg.push.ntfyTopicUrl)} ` +
+      `watchlist=${wlSummary}`,
   );
   await Promise.all([
     loop("ship-matrix", cfg, state),

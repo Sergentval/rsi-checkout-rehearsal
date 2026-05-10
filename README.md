@@ -18,6 +18,43 @@ The `comm-link` source is what actually catches new drops in real time. The
 `calendar` source covers "you forgot Invictus starts tomorrow" — useful for
 windows where concept reveals are likely. `ship-matrix` is the leak channel.
 
+## Watchlist
+
+The daemon detects every drop. The watchlist is the filter that decides which
+ones get a louder alert.
+
+Set `WATCHLIST` in `.env` to a comma-separated list of `ship:mode` pairs:
+
+```bash
+# Just the ship: alert on any version
+WATCHLIST=Polaris
+
+# Warbond only (fresh-money sale)
+WATCHLIST=Polaris:warbond
+
+# Store-credit allowed only (no warbond suffix in URL)
+WATCHLIST=Polaris:store-credit
+
+# Mixed: track several ships, each with its own preference
+WATCHLIST=Polaris:warbond,Idris:any,Galaxy:credit
+```
+
+Mode aliases: `warbond` = `wb`, `store-credit` = `credit` = `sc`, `any`
+(default).
+
+Match logic is case-insensitive substring search across the detection's
+title + URL. The warbond marker is the whole word `warbond` (won't trigger
+on e.g. "Warbondage"). When a match fires, the push is escalated:
+
+| Channel  | Normal drop                    | Watchlist match                                |
+| -------- | ------------------------------ | ---------------------------------------------- |
+| Discord  | green embed, `[DROP]` tag      | bright red embed, `[WATCH]` tag                |
+| ntfy     | priority `high`, tag `rocket`  | priority `max`, tag `rotating_light` (alarm)   |
+
+After editing `WATCHLIST` in `.env`, restart the service:
+`sudo systemctl restart sc-drop-watcher`. The startup log line shows the
+parsed watchlist so you can confirm it loaded correctly.
+
 ## Companion: checkout rehearsal (browser-side)
 
 Two equivalent flavors — pick one. Both run only on `robertsspaceindustries.com`

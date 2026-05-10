@@ -9,7 +9,7 @@ export interface PushTargets {
 }
 
 interface NotifyArgs {
-  readonly kind: "new" | "removed" | "error";
+  readonly kind: "new" | "removed" | "error" | "watchlist";
   readonly event?: DropEvent;
   readonly message: string;
 }
@@ -22,6 +22,10 @@ function severity(kind: NotifyArgs["kind"]): { color: number; tag: string; prior
       return { color: 0x888888, tag: "GONE", priority: "default" };
     case "error":
       return { color: 0xcc0033, tag: "ERROR", priority: "low" };
+    case "watchlist":
+      // Loudest channel: bright red embed, ntfy "max" priority + alarm tag.
+      // ntfy on the phone vibrates differently for max-priority pushes.
+      return { color: 0xff0033, tag: "WATCH", priority: "max" };
   }
 }
 
@@ -67,7 +71,11 @@ async function sendNtfy(url: string, args: NotifyArgs, token: string | undefined
     "user-agent": ua,
     "title": fmtTitle(args).slice(0, 250),
     "priority": sev.priority,
-    "tags": args.kind === "new" ? "rocket" : args.kind === "error" ? "warning" : "wastebasket",
+    "tags":
+      args.kind === "watchlist" ? "rotating_light"
+      : args.kind === "new" ? "rocket"
+      : args.kind === "error" ? "warning"
+      : "wastebasket",
   };
   if (args.event?.url) headers["click"] = args.event.url;
   if (token) headers["authorization"] = `Bearer ${token}`;
