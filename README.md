@@ -62,11 +62,23 @@ sudo systemctl enable --now sc-drop-watcher
 journalctl -u sc-drop-watcher -f
 ```
 
+### After upgrading Node via nvm
+
 The unit's `ExecStart` is pinned to the current nvm-managed node binary
 (`/home/ubuntu/.nvm/versions/node/v24.13.1/bin/node`) and invokes `tsx` via
-its in-repo entry point (`node_modules/tsx/dist/cli.mjs`). After upgrading
-Node via nvm, update the node path in the unit file and
-`sudo systemctl daemon-reload && sudo systemctl restart sc-drop-watcher`.
+its in-repo entry point (`node_modules/tsx/dist/cli.mjs`). After any
+`nvm install` / `nvm use` that changes the active Node version:
+
+1. Update both occurrences of the node path (in `systemd/sc-drop-watcher.service`
+   and the example above) to the new version.
+2. `sudo cp systemd/sc-drop-watcher.service /etc/systemd/system/`
+3. `sudo systemctl daemon-reload && sudo systemctl restart sc-drop-watcher`
+4. `journalctl -u sc-drop-watcher -n 30 --no-pager` — confirm `started`,
+   not `status=203/EXEC`.
+
+If you forget step 1 and start the service anyway, the `ExecStartPre=` guard
+in the unit will log a clear message naming the missing binary, instead of
+the generic `status=203/EXEC`.
 
 ## Push targets
 

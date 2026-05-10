@@ -9,6 +9,7 @@ User=ubuntu
 Group=ubuntu
 WorkingDirectory=/home/ubuntu/projects/sc-drop-watcher
 EnvironmentFile=/home/ubuntu/projects/sc-drop-watcher/.env
+ExecStartPre=/bin/sh -c '[ -x /home/ubuntu/.nvm/versions/node/v24.13.1/bin/node ] || { echo "Pinned node binary not found at /home/ubuntu/.nvm/versions/node/v24.13.1/bin/node — update ExecStart in systemd/sc-drop-watcher.service after the nvm Node upgrade, then daemon-reload"; exit 1; }'
 ExecStart=/home/ubuntu/.nvm/versions/node/v24.13.1/bin/node /home/ubuntu/projects/sc-drop-watcher/node_modules/tsx/dist/cli.mjs src/main.ts
 Restart=on-failure
 RestartSec=10
