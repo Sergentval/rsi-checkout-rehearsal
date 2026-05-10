@@ -63,6 +63,30 @@ extension chrome. Drag the file into Tampermonkey or Violentmonkey to install.
 Useful if you don't want a permanent extension entry in your browser, or if
 you're using a managed Chrome where extension loading is restricted.
 
+> The userscript is generated from `chrome-extension/content.js` plus
+> `userscript/header.txt` via `npm run build:userscript`. Edit `content.js`
+> (the source of truth), then regenerate. Don't hand-edit the userscript
+> file directly — your changes will be overwritten on the next build.
+
+### What the panel shows
+
+| Field          | Source                                                                        |
+| -------------- | ----------------------------------------------------------------------------- |
+| URL            | `location.pathname` (truncated to 32 chars)                                   |
+| Ship           | parsed from `/pledge/<category>/<slug>` URLs, with `-Warbond` stripped        |
+| Mode           | `WARBOND (fresh money)` if URL ends in `-Warbond`, else `Store credit OK`     |
+| Alt URL        | the toggled-warbond URL — clickable, present only on `/pledge/...` pages      |
+| Buy buttons    | count of visible Add-to-Cart-shaped buttons                                   |
+| Checkout       | count of visible Checkout / Place-Order / Pay-shaped buttons                  |
+| Store credit   | dollar amount near "store credit" text, parsed from page                      |
+| Total          | dollar amount near "total" / "order total" / "grand total", parsed from page  |
+| SC autofill    | regex-based fallback if RSI's Max button isn't on the page                    |
+| Max button     | did we find and click RSI's "apply max credit" button on a payment page?      |
+| Latency        | round-trip time of one HEAD request to RSI per refresh                        |
+
+Hotkeys: **F** focus next buy button, **M** click Max-credit button on
+payment pages, **R** force refresh, **Esc** hide / show the overlay.
+
 ## Install
 
 ```bash

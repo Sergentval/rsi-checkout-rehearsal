@@ -9,6 +9,7 @@
 // @grant        none
 // ==/UserScript==
 
+
 /* eslint-disable */
 (function () {
   "use strict";
@@ -207,6 +208,74 @@
     setTimeout(() => { input.style.outline = prevOutline; }, 1500);
   }
 
+  // RSI's checkout has an "Apply Max Credit" button that auto-fills the
+  // store-credit amount input with min(available_credit, cart_total). This
+  // is RSI's own UI affordance — clicking it is functionally identical to
+  // a user clicking it themselves, and more reliable than our regex prefill
+  // because RSI computes the right amount internally.
+  // The button is type="button" — it does NOT submit a form. It only
+  // toggles UI state. Place Order still requires a separate explicit click.
+  function findMaxCreditButton() {
+    // Exact match on the aria-label RSI ships in production.
+    let btn = document.querySelector('button[aria-label="apply max credit" i]');
+    if (btn) return btn;
+    // Fallback: any non-disabled <button> whose visible text is "Max" and
+    // whose nearby ancestor mentions "credit".
+    for (const b of document.querySelectorAll("button")) {
+      if (b.disabled) continue;
+      const txt = (b.innerText || "").trim();
+      if (txt !== "Max" && txt !== "MAX") continue;
+      const rect = b.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      const ctx = (b.closest("form, section, div")?.innerText || "").toLowerCase();
+      if (ctx.includes("credit")) return b;
+    }
+    return null;
+  }
+
+  const clickedMax = new WeakSet();
+  let maxStatus = "—";
+  function tryClickMaxCredit() {
+    const btn = findMaxCreditButton();
+    if (!btn) {
+      maxStatus = "no Max button on page";
+      return false;
+    }
+    if (clickedMax.has(btn)) {
+      maxStatus = "Max already applied";
+      return true;
+    }
+    btn.click();
+    clickedMax.add(btn);
+    maxStatus = "Max applied";
+    // Visible feedback — flash the button green for 1.5s.
+    const prevOutline = btn.style.outline;
+    btn.style.outline = "3px solid #00e676";
+    setTimeout(() => { btn.style.outline = prevOutline; }, 1500);
+    return true;
+  }
+
+  // Parse pledge-page URLs to surface ship name + warbond status + alt URL.
+  // Examples:
+  //   /en/pledge/Standalone-Ships/UTV-Warbond  →  warbond, alt = /en/pledge/Standalone-Ships/UTV
+  //   /en/pledge/Standalone-Ships/UTV          →  store-credit OK, alt = /en/pledge/Standalone-Ships/UTV-Warbond
+  // Not every ship has both versions; the alt URL is a guess that 404s if not.
+  function parsePledgePage(pathname) {
+    const m = pathname.match(/\/pledge\/[^/]+\/([^/?#]+)\/?$/i);
+    if (!m) return null;
+    const slug = m[1];
+    const isWarbond = /-Warbond$/i.test(slug);
+    const baseSlug = slug.replace(/-Warbond$/i, "");
+    const altSlug = isWarbond ? baseSlug : `${baseSlug}-Warbond`;
+    const altPath = pathname.replace(/[^/]+\/?$/, altSlug);
+    return {
+      ship: baseSlug.replace(/-/g, " "),
+      isWarbond,
+      altPath,
+      altLabel: isWarbond ? "→ try store-credit URL" : "→ try warbond URL",
+    };
+  }
+
   let latencyMs = null;
   async function measureLatency() {
     try {
@@ -228,11 +297,14 @@
 
     const fields = [
       ["url",      "URL"],
+      ["ship",     "Ship"],
+      ["mode",     "Mode"],
       ["buy",      "Buy buttons"],
       ["co",       "Checkout"],
       ["sc",       "Store credit"],
       ["tot",      "Total"],
       ["prefill",  "SC autofill"],
+      ["max",      "Max button"],
       ["lat",      "Latency"],
     ];
     for (const [id, label] of fields) {
@@ -244,12 +316,23 @@
       p.appendChild(row);
     }
 
+    // Alt-URL row is a clickable link, so it gets its own row outside the
+    // generic span-based loop above. Visibility toggled in refresh().
+    const altRow = document.createElement("div");
+    altRow.className = "row"; altRow.id = "scr-alt-row"; altRow.style.display = "none";
+    const altK = document.createElement("span"); altK.className = "k"; altK.textContent = "Alt URL";
+    const altA = document.createElement("a"); altA.id = "scr-alt"; altA.className = "v";
+    altA.style.color = "#6df2a9"; altA.style.textDecoration = "underline";
+    altA.target = "_self"; altA.rel = "noopener";
+    altRow.appendChild(altK); altRow.appendChild(altA);
+    p.appendChild(altRow);
+
     const hkRow = document.createElement("div");
     hkRow.className = "row";
     hkRow.style.marginTop = "6px";
     const hkK = document.createElement("span"); hkK.className = "k"; hkK.textContent = "Hotkeys";
     const hkV = document.createElement("span"); hkV.className = "v";
-    for (const [key, label] of [["F", "focus next"], ["R", "refresh"], ["Esc", "hide"]]) {
+    for (const [key, label] of [["F", "focus"], ["M", "max"], ["R", "refresh"], ["Esc", "hide"]]) {
       const kbd = document.createElement("kbd"); kbd.textContent = key;
       hkV.appendChild(kbd);
       hkV.appendChild(document.createTextNode(` ${label}  `));
@@ -296,11 +379,42 @@
 
     ensurePanel();
 
-    // Only attempt the store-credit prefill on payment-shaped URLs. Outside
-    // those, leave the existing input values alone — pre-filling on a random
-    // page would be confusing and could touch unrelated forms.
+    // Only attempt the store-credit prefill / Max click on payment-shaped
+    // URLs. Outside those, leave the page alone — pre-filling on a random
+    // page could touch unrelated forms.
     const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
-    if (isPaymentPage) tryPrefillStoreCredit(); else prefillStatus = "—";
+    if (isPaymentPage) {
+      // Try the Max button first (RSI's own affordance, more reliable). If it
+      // isn't on the page, fall back to the regex-based input prefill.
+      const maxApplied = tryClickMaxCredit();
+      if (!maxApplied) tryPrefillStoreCredit();
+    } else {
+      prefillStatus = "—";
+      maxStatus = "—";
+    }
+
+    // Pledge-page parsing — surfaces ship name + warbond status + alt URL.
+    const pledge = parsePledgePage(location.pathname);
+    const altRow = document.getElementById("scr-alt-row");
+    const altA = document.getElementById("scr-alt");
+    if (pledge) {
+      setText("scr-ship", pledge.ship);
+      setText("scr-mode", pledge.isWarbond ? "WARBOND (fresh money)" : "Store credit OK");
+      const modeEl = document.getElementById("scr-mode");
+      if (modeEl) modeEl.style.color = pledge.isWarbond ? "#ff6b6b" : "#6df2a9";
+      if (altA && altRow) {
+        altA.textContent = pledge.altLabel;
+        altA.href = pledge.altPath;
+        altA.title = pledge.altPath;
+        altRow.style.display = "";
+      }
+    } else {
+      setText("scr-ship", "—");
+      setText("scr-mode", "—");
+      const modeEl = document.getElementById("scr-mode");
+      if (modeEl) modeEl.style.color = "";
+      if (altRow) altRow.style.display = "none";
+    }
 
     setText("scr-url", location.pathname.slice(0, 32));
     setText("scr-buy", String(buys.length));
@@ -308,12 +422,15 @@
     setText("scr-sc", readStoreCredit() ?? "—");
     setText("scr-tot", readCartTotal() ?? "—");
     setText("scr-prefill", prefillStatus || "—");
+    setText("scr-max", maxStatus || "—");
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
 
     let tip;
     if (isPaymentPage) {
       tip = "Payment page — read total carefully";
       showBanner();
+    } else if (pledge?.isWarbond) {
+      tip = "WARBOND page — fresh money required";
     } else if (buys.length > 0) {
       tip = "Add-to-Cart available — press F to focus";
     } else if (cos.length > 0) {
@@ -341,6 +458,7 @@
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === "f" || e.key === "F") { focusNext(); e.preventDefault(); }
+    else if (e.key === "m" || e.key === "M") { tryClickMaxCredit(); refresh(); e.preventDefault(); }
     else if (e.key === "r" || e.key === "R") { refresh(); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);

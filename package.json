@@ -12,7 +12,8 @@
     "start": "node --env-file-if-exists=.env --enable-source-maps dist/main.js",
     "dev": "tsx --env-file-if-exists=.env src/main.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test --import tsx tests/*.test.ts"
+    "test": "node --test --import tsx tests/*.test.ts",
+    "build:userscript": "cat userscript/header.txt chrome-extension/content.js > userscript/rsi-checkout-rehearsal.user.js"
   },
   "dependencies": {
     "node-html-parser": "^6.1.13"
