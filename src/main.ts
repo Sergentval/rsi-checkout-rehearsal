@@ -10,6 +10,7 @@ import {
 import { notify, type PushTargets } from "./push.js";
 import { calendarTicks } from "./calendar.js";
 import { parseWatchlist, matchWatchlist, type WatchEntry } from "./watchlist.js";
+import { parseProbeUrls, headProbe, classifyTransition } from "./probe.js";
 
 interface Config {
   readonly stateFile: string;
@@ -17,6 +18,8 @@ interface Config {
   readonly intervals: Record<DropEvent["source"], number>;
   readonly push: PushTargets;
   readonly watchlist: ReadonlyArray<WatchEntry>;
+  readonly probeUrls: ReadonlyArray<string>;
+  readonly probeIntervalMs: number;
 }
 
 interface State {
@@ -25,6 +28,8 @@ interface State {
   lastError: Record<DropEvent["source"], string | undefined>;
   // Calendar tick keys we've already announced (so each transition fires once).
   seenCalendarTicks: string[];
+  // URL → last-observed HTTP status code (or -1 on transport failure).
+  probeStatus: Record<string, number>;
 }
 
 function emptyState(): State {
@@ -32,6 +37,7 @@ function emptyState(): State {
     seen: { "ship-matrix": [], "pledge-store": [], "comm-link": [] },
     lastError: { "ship-matrix": undefined, "pledge-store": undefined, "comm-link": undefined },
     seenCalendarTicks: [],
+    probeStatus: {},
   };
 }
 
@@ -56,6 +62,8 @@ function readEnv(): Config {
       live,
     },
     watchlist: parseWatchlist(e.WATCHLIST),
+    probeUrls: parseProbeUrls(e.PROBE_URLS),
+    probeIntervalMs: Number(e.PROBE_INTERVAL_SEC ?? 120) * 1000,
   };
 }
 
@@ -68,6 +76,7 @@ async function loadState(path: string): Promise<State> {
       seen: { ...base.seen, ...(parsed.seen ?? {}) } as State["seen"],
       lastError: { ...base.lastError, ...(parsed.lastError ?? {}) } as State["lastError"],
       seenCalendarTicks: parsed.seenCalendarTicks ?? [],
+      probeStatus: parsed.probeStatus ?? {},
     };
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptyState();
@@ -184,6 +193,48 @@ async function calendarLoop(cfg: Config, state: State): Promise<void> {
   }
 }
 
+async function probeLoop(cfg: Config, state: State): Promise<void> {
+  if (cfg.probeUrls.length === 0) return; // nothing to do
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const start = Date.now();
+    for (const url of cfg.probeUrls) {
+      try {
+        const result = await headProbe(url, { userAgent: cfg.userAgent });
+        const prev = state.probeStatus[url];
+        const transition = classifyTransition(prev, result.status);
+        if (transition.kind === "went-live") {
+          await notify(cfg.push, {
+            kind: "watchlist",
+            event: {
+              source: "comm-link",
+              id: `probe:${url}`,
+              title: `URL went live: HTTP ${prev ?? "?"} → ${result.status}`,
+              url,
+            },
+            message:
+              `🟢 PROBE: ${url}\n` +
+              `Was HTTP ${prev ?? "first observation"}, now HTTP ${result.status}. ` +
+              `Page is reachable — likely just listed.`,
+          });
+        } else if (transition.kind === "went-down") {
+          await notify(cfg.push, {
+            kind: "removed",
+            message: `PROBE: ${url} HTTP ${prev} → ${result.status} (page taken down)`,
+          });
+        }
+        state.probeStatus[url] = result.status;
+      } catch (err) {
+        console.error(`[probe] ${url} loop error:`, err);
+      }
+    }
+    await saveState(cfg.stateFile, state);
+    const elapsed = Date.now() - start;
+    const wait = Math.max(5_000, cfg.probeIntervalMs - elapsed);
+    await new Promise((r) => setTimeout(r, wait));
+  }
+}
+
 async function loop(source: DropEvent["source"], cfg: Config, state: State): Promise<void> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
@@ -206,16 +257,18 @@ async function main(): Promise<void> {
   const wlSummary = cfg.watchlist.length === 0
     ? "none"
     : cfg.watchlist.map((w) => `${w.ship}:${w.mode}`).join(",");
+  const probeSummary = cfg.probeUrls.length === 0 ? "none" : `${cfg.probeUrls.length} url(s) every ${cfg.probeIntervalMs / 1000}s`;
   console.log(
     `sc-drop-watcher starting :: live=${cfg.push.live} ` +
       `discord=${Boolean(cfg.push.discordWebhookUrl)} ntfy=${Boolean(cfg.push.ntfyTopicUrl)} ` +
-      `watchlist=${wlSummary}`,
+      `watchlist=${wlSummary} probe=${probeSummary}`,
   );
   await Promise.all([
     loop("ship-matrix", cfg, state),
     loop("pledge-store", cfg, state),
     loop("comm-link", cfg, state),
     calendarLoop(cfg, state),
+    probeLoop(cfg, state),
   ]);
 }
 

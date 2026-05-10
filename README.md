@@ -55,6 +55,40 @@ After editing `WATCHLIST` in `.env`, restart the service:
 `sudo systemctl restart sc-drop-watcher`. The startup log line shows the
 parsed watchlist so you can confirm it loaded correctly.
 
+## URL probe (for ships not yet on the site)
+
+The watchlist matches against detections from the existing sources — comm-link
+posts and ship-matrix entries. That covers everything once CIG announces or
+adds the ship to their data. For ships RSI hasn't shipped yet (ODIN, Apollo,
+unannounced concepts), the URL probe catches the page going live before any
+announcement post — sometimes minutes earlier.
+
+Set `PROBE_URLS` in `.env` to a comma-separated list of full `https://` URLs.
+The daemon does a HEAD request to each every `PROBE_INTERVAL_SEC` (default
+120s):
+
+```bash
+# Watch for an upcoming ship — probe both store-credit and warbond shapes
+PROBE_URLS=https://robertsspaceindustries.com/en/pledge/Standalone-Ships/ODIN,https://robertsspaceindustries.com/en/pledge/Standalone-Ships/ODIN-Warbond
+PROBE_INTERVAL_SEC=120
+```
+
+Status-transition logic:
+
+| Was      | Now      | Action                                                                                |
+| -------- | -------- | ------------------------------------------------------------------------------------- |
+| (first)  | any      | silent — just learn the baseline                                                      |
+| 4xx / -1 | 2xx      | **watchlist-priority push** ("URL went live: HTTP 404 → 200")                         |
+| 2xx      | 4xx      | removed-priority push ("page taken down")                                             |
+| same     | same     | silent                                                                                |
+
+The probe is targeted, not a scanner — list the exact URLs you care about,
+not categories. Be polite with the cadence: 120s default is reasonable, lower
+than 60s starts to look rude.
+
+Restart the service after editing `PROBE_URLS`. Startup line includes
+`probe=N url(s) every Ns` so you can confirm it loaded.
+
 ## Companion: checkout rehearsal (browser-side)
 
 Two equivalent flavors — pick one. Both run only on `robertsspaceindustries.com`
