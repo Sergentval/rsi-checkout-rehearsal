@@ -59,6 +59,9 @@ interface ShipMatrixResponse {
     readonly name?: string;
     readonly production_status?: string;
     readonly manufacturer?: { readonly name?: string };
+    // RSI's own canonical pledge-page path, e.g. "/pledge/ships/rsi-aurora/Aurora-Mk-I-ES".
+    // Present for nearly every entry; absent for some early-concept rows.
+    readonly url?: string;
   }>;
 }
 
@@ -70,19 +73,27 @@ export async function fetchShipMatrix(opts: FetchOptions): Promise<DropEvent[]> 
   if (json.success !== 1 || !Array.isArray(json.data)) {
     throw new Error("ship-matrix: unexpected payload shape");
   }
-  return json.data.map((s) => ({
-    source: "ship-matrix" as const,
-    // Encode status into the dedup id so a concept→flight-ready transition
-    // (or any status flip) registers as a new event — that's the leak signal
-    // beyond "ship ID never seen before".
-    id: `${s.id}:${s.production_status ?? "unknown"}`,
-    title: `${s.name ?? `ship #${s.id}`}${s.production_status ? ` [${s.production_status}]` : ""}`,
-    url: "https://robertsspaceindustries.com/pledge/ships",
-    extra: {
-      manufacturer: s.manufacturer?.name,
-      production_status: s.production_status,
-    },
-  }));
+  return json.data.map((s) => {
+    // Use RSI's own canonical URL when available. The path is relative
+    // (e.g. "/pledge/ships/rsi-aurora/Aurora-Mk-I-ES"); prepend origin.
+    // Fall back to the generic landing page only if `url` is missing.
+    const path = typeof s.url === "string" && s.url.startsWith("/") ? s.url : null;
+    return {
+      source: "ship-matrix" as const,
+      // Encode status into the dedup id so a concept→flight-ready transition
+      // (or any status flip) registers as a new event — that's the leak signal
+      // beyond "ship ID never seen before".
+      id: `${s.id}:${s.production_status ?? "unknown"}`,
+      title: `${s.name ?? `ship #${s.id}`}${s.production_status ? ` [${s.production_status}]` : ""}`,
+      url: path
+        ? `https://robertsspaceindustries.com${path}`
+        : "https://robertsspaceindustries.com/pledge/ships",
+      extra: {
+        manufacturer: s.manufacturer?.name,
+        production_status: s.production_status,
+      },
+    };
+  });
 }
 
 export async function fetchCommLink(opts: FetchOptions): Promise<DropEvent[]> {

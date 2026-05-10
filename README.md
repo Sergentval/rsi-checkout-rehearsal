@@ -55,21 +55,45 @@ After editing `WATCHLIST` in `.env`, restart the service:
 `sudo systemctl restart sc-drop-watcher`. The startup log line shows the
 parsed watchlist so you can confirm it loaded correctly.
 
-## URL probe (for ships not yet on the site)
+## URL probe (for known ships that may re-stock)
 
-The watchlist matches against detections from the existing sources — comm-link
-posts and ship-matrix entries. That covers everything once CIG announces or
-adds the ship to their data. For ships RSI hasn't shipped yet (ODIN, Apollo,
-unannounced concepts), the URL probe catches the page going live before any
-announcement post — sometimes minutes earlier.
+The watchlist matches against detections from comm-link posts and ship-matrix
+entries — that covers everything once CIG announces or adds the ship to
+their data. The URL probe is for the specific case where you already know a
+ship's canonical URL (because it's been sold before) and want to catch the
+moment its page flips from 404 back to 200 — i.e. RSI silently re-stocks a
+limited item without publishing a new comm-link post.
 
-Set `PROBE_URLS` in `.env` to a comma-separated list of full `https://` URLs.
-The daemon does a HEAD request to each every `PROBE_INTERVAL_SEC` (default
-120s):
+### What the probe can and can't do
+
+| Scenario                                                | Right tool                            |
+| ------------------------------------------------------- | ------------------------------------- |
+| Unannounced ship like ODIN, you have no URL             | `WATCHLIST=ODIN:any` (no probe)       |
+| Re-stock of a known ship (e.g. Idris-K)                 | `PROBE_URLS=<its canonical url>`      |
+| Concept-sale announcement of any ship                   | watchlist or default `[DROP]` push    |
+
+You **cannot** probe an upcoming ship's URL — the URL isn't knowable until
+RSI publishes the ship-matrix entry, and at that point the existing
+ship-matrix detection already catches it (within 5 min, and with the
+correct canonical URL in the push because the daemon now reads RSI's own
+`.url` field).
+
+### Finding a canonical URL
+
+Visit the ship's page on `robertsspaceindustries.com`; the URL bar will show
+`https://robertsspaceindustries.com/pledge/ships/<mfr-slug>/<ship-slug>`.
+Or query ship-matrix directly:
 
 ```bash
-# Watch for an upcoming ship — probe both store-credit and warbond shapes
-PROBE_URLS=https://robertsspaceindustries.com/en/pledge/Standalone-Ships/ODIN,https://robertsspaceindustries.com/en/pledge/Standalone-Ships/ODIN-Warbond
+curl -s -X POST https://robertsspaceindustries.com/ship-matrix/index \
+  -H "X-Requested-With: XMLHttpRequest" \
+  | jq '.data[] | select(.name | test("Idris"; "i")) | {name, url}'
+```
+
+### Configuration
+
+```bash
+PROBE_URLS=https://robertsspaceindustries.com/pledge/ships/aegis-dynamics/Idris-K,https://robertsspaceindustries.com/pledge/ships/aegis-dynamics/Javelin
 PROBE_INTERVAL_SEC=120
 ```
 
@@ -83,8 +107,8 @@ Status-transition logic:
 | same     | same     | silent                                                                                |
 
 The probe is targeted, not a scanner — list the exact URLs you care about,
-not categories. Be polite with the cadence: 120s default is reasonable, lower
-than 60s starts to look rude.
+not categories. 120s default is the recommended floor; below ~60s starts
+to look rude on RSI's side.
 
 Restart the service after editing `PROBE_URLS`. Startup line includes
 `probe=N url(s) every Ns` so you can confirm it loaded.
