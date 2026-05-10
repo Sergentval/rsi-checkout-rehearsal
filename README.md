@@ -18,22 +18,50 @@ The `comm-link` source is what actually catches new drops in real time. The
 `calendar` source covers "you forgot Invictus starts tomorrow" — useful for
 windows where concept reveals are likely. `ship-matrix` is the leak channel.
 
-## Companion: checkout rehearsal userscript
+## Companion: checkout rehearsal (browser-side)
 
-`userscript/rsi-checkout-rehearsal.user.js` is a Tampermonkey/Violentmonkey
-script for the *human* side. Install in your browser's userscript manager and
-visit any RSI page. It will:
+Two equivalent flavors — pick one. Both run only on `robertsspaceindustries.com`
+and do exactly the same thing.
+
+What they do:
 
 - Outline buy/checkout buttons with a pulsing green/orange ring.
-- Show a small overlay with: page URL, count of buy buttons, store-credit
-  balance (parsed from page text), cart total, latency to RSI in ms.
-- Provide hotkeys: **F** focus next buy button, **R** force refresh, **Esc**
-  hide the overlay.
-- On `/checkout/payment` and similar URLs, paint a red "slow down" banner so
-  you don't misclick under pressure.
+- Show a small overlay with: page URL, buy-button count, store-credit balance
+  (parsed from page text), cart total, latency to RSI in ms, store-credit
+  autofill status.
+- On `/checkout/payment` (and `/payment` / `/confirm`), find the store-credit
+  amount input by name/placeholder/aria-label/surrounding-label and pre-fill
+  it with the cart total. Input flashes green when filled. **You still click
+  Apply and Place Order yourself.**
+- Hotkeys: **F** focus next buy button, **R** force refresh, **Esc** hide
+  the overlay.
+- On payment-shaped URLs, paint a red "slow down" banner so you don't
+  misclick under pressure.
 
-It does **not** click anything, fill anything, or auto-submit. The whole
-point is to make a *human* click as fast and as accurately as possible.
+It does **not** click anything, submit anything, or fill payment-card fields.
+The store-credit autofill is the same UX category as a password manager
+filling a credit-card number — value goes in, human presses the button.
+
+### Option A: Chromium extension (recommended)
+
+`chrome-extension/` is a Manifest V3 extension. Load unpacked:
+
+1. Open `chrome://extensions/` (or `brave://extensions/`, `edge://extensions/`).
+2. Toggle **Developer mode** on (top right).
+3. **Load unpacked** → select `~/projects/sc-drop-watcher/chrome-extension/`.
+4. Open any RSI page. The bottom-right panel should appear within a second.
+5. Click the toolbar icon for a popup showing version + current-tab status +
+   hotkey reference.
+
+No build step. Edit `content.js`, hit the refresh icon next to the extension
+card on `chrome://extensions/` to reload.
+
+### Option B: Tampermonkey / Violentmonkey userscript
+
+`userscript/rsi-checkout-rehearsal.user.js` is the same logic without the
+extension chrome. Drag the file into Tampermonkey or Violentmonkey to install.
+Useful if you don't want a permanent extension entry in your browser, or if
+you're using a managed Chrome where extension loading is restricted.
 
 ## Install
 

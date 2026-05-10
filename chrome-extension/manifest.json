@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "RSI Checkout Rehearsal",
+  "short_name": "sc-checkout-rehearsal",
+  "version": "0.1.0",
+  "description": "Personal click-helper for Roberts Space Industries pledge / cart / checkout pages. Highlights buy buttons, shows store-credit balance + cart total + latency, prefills the store-credit amount with the cart total. Does NOT auto-click, auto-submit, or fill payment fields.",
+  "author": "Sergentval",
+  "icons": {
+    "16":  "icons/icon-16.png",
+    "48":  "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "RSI Checkout Rehearsal",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16":  "icons/icon-16.png",
+      "48":  "icons/icon-48.png"
+    }
+  },
+  "permissions": ["activeTab"],
+  "host_permissions": [
+    "https://robertsspaceindustries.com/*",
+    "https://*.robertsspaceindustries.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://robertsspaceindustries.com/*",
+        "https://*.robertsspaceindustries.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

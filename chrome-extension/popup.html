@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>RSI Checkout Rehearsal</title>
+    <style>
+      :root { color-scheme: dark; }
+      body {
+        font: 13px/1.45 ui-monospace, Menlo, monospace;
+        background: #0b1622;
+        color: #d6e7ff;
+        margin: 0;
+        padding: 12px 14px;
+        width: 280px;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 13px;
+        color: #6df2a9;
+        letter-spacing: 0.04em;
+      }
+      .row {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 2px 0;
+      }
+      .k { color: #7ea0c2; }
+      .v { color: #fff; font-weight: 600; word-break: break-all; text-align: right; }
+      .ok { color: #00e676; }
+      .warn { color: #ffd166; }
+      hr {
+        border: none;
+        border-top: 1px solid #1f3550;
+        margin: 10px 0;
+      }
+      kbd {
+        background: #1a2638;
+        border: 1px solid #2c4566;
+        border-radius: 3px;
+        padding: 0 4px;
+        font-size: 11px;
+        color: #cfe;
+      }
+      .note {
+        color: #9ab5d3;
+        font-size: 11px;
+        margin-top: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>RSI checkout rehearsal</h1>
+
+    <div class="row"><span class="k">Tab</span><span class="v" id="tab-host">—</span></div>
+    <div class="row"><span class="k">Status</span><span class="v" id="status">—</span></div>
+    <div class="row"><span class="k">Version</span><span class="v" id="version">—</span></div>
+
+    <hr />
+
+    <div class="row"><span class="k">Hotkeys</span></div>
+    <div class="row"><span class="k">Focus next buy</span><span class="v"><kbd>F</kbd></span></div>
+    <div class="row"><span class="k">Refresh panel</span><span class="v"><kbd>R</kbd></span></div>
+    <div class="row"><span class="k">Hide / show</span><span class="v"><kbd>Esc</kbd></span></div>
+
+    <hr />
+
+    <div class="note">
+      Content script runs on RSI pages only. Highlights buy buttons, shows
+      store-credit + cart total + latency, pre-fills the store-credit
+      amount input with the cart total on payment pages. Never clicks or
+      submits anything.
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>
