@@ -124,6 +124,89 @@
     return m ? `$${m[1]}` : null;
   }
 
+  // Parse a "$1,578.00" / "$1578" / "1578.00" string into a Number.
+  function parseAmount(s) {
+    if (!s) return null;
+    const m = String(s).match(/([\d,]+(?:\.\d{1,2})?)/);
+    if (!m) return null;
+    const n = Number(m[1].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  }
+
+  // Find the input field RSI uses for "amount of store credit to apply".
+  // Heuristic — matches by name/placeholder/aria-label/associated-label, all
+  // case-insensitive. Returns the first plausible match or null. If RSI
+  // changes the field shape, extend MATCHERS rather than rewriting callers.
+  function findStoreCreditInput() {
+    const MATCHERS = [/store.?credit/i, /apply.?credit/i, /credit.?amount/i];
+    const inputs = document.querySelectorAll('input[type="text"], input[type="number"], input:not([type])');
+    for (const el of inputs) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue; // hidden
+      if (el.disabled || el.readOnly) continue;
+      const haystacks = [
+        el.getAttribute("name"),
+        el.getAttribute("placeholder"),
+        el.getAttribute("aria-label"),
+        el.getAttribute("id"),
+      ].filter(Boolean);
+      // Walk up to two parents looking for a label or descriptive text.
+      let p = el.parentElement;
+      for (let i = 0; i < 2 && p; i++) {
+        haystacks.push((p.innerText || "").slice(0, 200));
+        p = p.parentElement;
+      }
+      const blob = haystacks.join(" | ");
+      if (MATCHERS.some((re) => re.test(blob))) return el;
+    }
+    return null;
+  }
+
+  // Set an input's value AND dispatch input+change events so React/Vue/etc.
+  // controlled-component state actually picks up the change. A plain
+  // .value = ... assignment is invisible to those frameworks.
+  function setInputValue(el, value) {
+    const proto = el instanceof HTMLInputElement ? HTMLInputElement.prototype : HTMLTextAreaElement.prototype;
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(el, value); else el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+
+  // Track which (input, value) pairs we've already prefilled this page-load,
+  // so the MutationObserver doesn't keep clobbering edits the user made by
+  // hand. Keyed by the input element identity — cleared on navigation.
+  const prefilled = new WeakSet();
+  let prefillStatus = "";
+
+  function tryPrefillStoreCredit() {
+    const totalStr = readCartTotal();
+    const total = parseAmount(totalStr);
+    if (total == null || total <= 0) {
+      prefillStatus = "no cart total visible";
+      return;
+    }
+    const input = findStoreCreditInput();
+    if (!input) {
+      prefillStatus = "no store-credit input found";
+      return;
+    }
+    if (prefilled.has(input)) {
+      prefillStatus = `prefilled: ${input.value}`;
+      return;
+    }
+    // Format with two decimals if cart total had cents, otherwise integer —
+    // matches what a human would type when copying the visible total.
+    const formatted = totalStr && totalStr.includes(".") ? total.toFixed(2) : String(total);
+    setInputValue(input, formatted);
+    prefilled.add(input);
+    prefillStatus = `prefilled $${formatted} (press Apply manually)`;
+    // Briefly flash the input so it's visible the script touched it.
+    const prevOutline = input.style.outline;
+    input.style.outline = "3px solid #00e676";
+    setTimeout(() => { input.style.outline = prevOutline; }, 1500);
+  }
+
   let latencyMs = null;
   async function measureLatency() {
     try {
@@ -144,12 +227,13 @@
     p.appendChild(h);
 
     const fields = [
-      ["url",  "URL"],
-      ["buy",  "Buy buttons"],
-      ["co",   "Checkout"],
-      ["sc",   "Store credit"],
-      ["tot",  "Total"],
-      ["lat",  "Latency"],
+      ["url",      "URL"],
+      ["buy",      "Buy buttons"],
+      ["co",       "Checkout"],
+      ["sc",       "Store credit"],
+      ["tot",      "Total"],
+      ["prefill",  "SC autofill"],
+      ["lat",      "Latency"],
     ];
     for (const [id, label] of fields) {
       const row = document.createElement("div");
@@ -211,15 +295,23 @@
     const cos = buttons.filter((b) => b.isCheckout);
 
     ensurePanel();
+
+    // Only attempt the store-credit prefill on payment-shaped URLs. Outside
+    // those, leave the existing input values alone — pre-filling on a random
+    // page would be confusing and could touch unrelated forms.
+    const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
+    if (isPaymentPage) tryPrefillStoreCredit(); else prefillStatus = "—";
+
     setText("scr-url", location.pathname.slice(0, 32));
     setText("scr-buy", String(buys.length));
     setText("scr-co", String(cos.length));
     setText("scr-sc", readStoreCredit() ?? "—");
     setText("scr-tot", readCartTotal() ?? "—");
+    setText("scr-prefill", prefillStatus || "—");
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
 
     let tip;
-    if (PAYMENT_URL_HINTS.some((p) => p.test(location.pathname))) {
+    if (isPaymentPage) {
       tip = "Payment page — read total carefully";
       showBanner();
     } else if (buys.length > 0) {
