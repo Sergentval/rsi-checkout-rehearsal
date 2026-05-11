@@ -8,6 +8,7 @@
     autoClickMax: true,
     scAutofill: true,
     measureLatency: true,
+    enableFlowHotkey: false,
   };
 
   const setText = (id, v) => {

@@ -92,6 +92,10 @@
     <label class="toggle"><input type="checkbox" id="t-autoClickMax">    <span class="desc">Auto-click "Max credit" button</span></label>
     <label class="toggle"><input type="checkbox" id="t-scAutofill">      <span class="desc">Store-credit input prefill (fallback)</span></label>
     <label class="toggle"><input type="checkbox" id="t-measureLatency">  <span class="desc">Measure latency to RSI</span></label>
+    <label class="toggle" title="When ON, pressing N on a checkout page clicks the visible Continue / Place Order button. ONE keypress = ONE click. Off by default because this is the only toggle that can complete a purchase.">
+      <input type="checkbox" id="t-enableFlowHotkey">
+      <span class="desc">[N] hotkey: click Continue / Place Order <span class="hint">(off by default — this is the one that can complete a purchase)</span></span>
+    </label>
     <button id="reset">Reset to defaults</button>
 
     <hr />

@@ -35,6 +35,7 @@
     autoClickMax: true,      // click RSI's "apply max credit" button on entry
     scAutofill: true,        // regex-based store-credit input prefill (fallback)
     measureLatency: true,    // HEAD request per refresh to time round-trip
+    enableFlowHotkey: false, // [N] hotkey clicks the page's primary "next" button
   };
   const settings = { ...DEFAULT_SETTINGS };
 
@@ -70,6 +71,20 @@
     /^\s*pledge\b/i,
     /^\s*checkout\s*$/i,
     /^\s*proceed to checkout\s*$/i,
+    /^\s*place order\s*$/i,
+    /^\s*confirm( order)?\s*$/i,
+    /^\s*pay( now)?\s*$/i,
+  ];
+
+  // Subset of BUY_PATTERNS: buttons that ADVANCE the checkout flow (not the
+  // initial "Add to Cart"). The [N] hotkey targets this set. Exists as its
+  // own list so the hotkey doesn't accidentally Add-to-Cart while you're
+  // browsing a pledge page.
+  const FLOW_PATTERNS = [
+    /^\s*continue\s*$/i,
+    /^\s*next\s*$/i,
+    /^\s*proceed( to checkout)?\s*$/i,
+    /^\s*checkout\s*$/i,
     /^\s*place order\s*$/i,
     /^\s*confirm( order)?\s*$/i,
     /^\s*pay( now)?\s*$/i,
@@ -274,6 +289,46 @@
     return null;
   }
 
+  // Find the page's primary "advance the checkout flow" button. Used by the
+  // [N] hotkey when enableFlowHotkey is on. Picks the largest visible button
+  // matching FLOW_PATTERNS — primary CTAs are typically the largest button
+  // by area on RSI's checkout pages.
+  function findFlowButton() {
+    let best = null;
+    let bestArea = 0;
+    const cands = document.querySelectorAll(
+      'button, a, input[type="button"], input[type="submit"], [role="button"]',
+    );
+    for (const el of cands) {
+      if (el.disabled) continue;
+      const txt = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
+      if (!txt) continue;
+      if (!FLOW_PATTERNS.some((p) => p.test(txt))) continue;
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      const area = rect.width * rect.height;
+      if (area > bestArea) { best = el; bestArea = area; }
+    }
+    return best;
+  }
+
+  let flowStatus = "—";
+  function tryClickFlow() {
+    if (!settings.enableFlowHotkey) {
+      flowStatus = "hotkey disabled (toggle in popup)";
+      return false;
+    }
+    const btn = findFlowButton();
+    if (!btn) { flowStatus = "no Continue/Place-Order button on page"; return false; }
+    const label = (btn.innerText || btn.value || btn.getAttribute("aria-label") || "").trim().slice(0, 40);
+    btn.click();
+    flowStatus = `clicked: ${label}`;
+    const prevOutline = btn.style.outline;
+    btn.style.outline = "3px solid #ff9100";
+    setTimeout(() => { btn.style.outline = prevOutline; }, 1500);
+    return true;
+  }
+
   const clickedMax = new WeakSet();
   let maxStatus = "—";
   function tryClickMaxCredit() {
@@ -346,6 +401,7 @@
       ["tot",      "Total"],
       ["prefill",  "SC autofill"],
       ["max",      "Max button"],
+      ["flow",     "N hotkey"],
       ["lat",      "Latency"],
     ];
     for (const [id, label] of fields) {
@@ -373,7 +429,7 @@
     hkRow.style.marginTop = "6px";
     const hkK = document.createElement("span"); hkK.className = "k"; hkK.textContent = "Hotkeys";
     const hkV = document.createElement("span"); hkV.className = "v";
-    for (const [key, label] of [["F", "focus"], ["M", "max"], ["R", "refresh"], ["Esc", "hide"]]) {
+    for (const [key, label] of [["F", "focus"], ["M", "max"], ["N", "next"], ["R", "refresh"], ["Esc", "hide"]]) {
       const kbd = document.createElement("kbd"); kbd.textContent = key;
       hkV.appendChild(kbd);
       hkV.appendChild(document.createTextNode(` ${label}  `));
@@ -479,6 +535,7 @@
     setText("scr-tot", readCartTotal() ?? "—");
     setText("scr-prefill", prefillStatus || "—");
     setText("scr-max", maxStatus || "—");
+    setText("scr-flow", settings.enableFlowHotkey ? (flowStatus || "armed") : "disabled (off)");
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
 
     let tip;
@@ -516,6 +573,7 @@
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     if (e.key === "f" || e.key === "F") { focusNext(); e.preventDefault(); }
     else if (e.key === "m" || e.key === "M") { tryClickMaxCredit(); refresh(); e.preventDefault(); }
+    else if (e.key === "n" || e.key === "N") { tryClickFlow(); refresh(); e.preventDefault(); }
     else if (e.key === "r" || e.key === "R") { refresh(); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);

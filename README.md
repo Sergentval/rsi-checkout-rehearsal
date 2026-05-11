@@ -196,8 +196,34 @@ instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
 | Auto-click "Max credit" button      | clicks RSI's Max button once on payment-page entry        |
 | Store-credit input prefill          | regex-based fallback when RSI's Max button isn't present  |
 | Measure latency to RSI              | one HEAD request per refresh (off → no extra traffic)     |
+| [N] hotkey (default **off**)        | press `N` to click the page's primary Continue / Place Order |
 
-There's also a **Reset to defaults** button that flips everything back on.
+There's also a **Reset to defaults** button that flips everything back to its
+default (everything on except `enableFlowHotkey`).
+
+### The N hotkey
+
+Off by default — flip it on in the popup if you want it.
+
+When armed, pressing `N` clicks **one** button on the current page: whichever
+visible button matches `Continue` / `Next` / `Proceed` / `Checkout` /
+`Place Order` / `Pay` / `Confirm`. The script picks the largest such button
+by area (RSI's primary CTAs are typically the biggest visible button), clicks
+it once, and flashes the click target orange. One keypress = one click.
+
+Typical flow with `N`:
+
+| Page              | Press | Effect                                          |
+| ----------------- | ----- | ----------------------------------------------- |
+| Cart              | `M`   | Clicks RSI's Max-credit button (already exists) |
+| Cart              | `N`   | Clicks Continue / Checkout to leave the cart    |
+| Address           | `N`   | Clicks Continue (default address pre-selected)  |
+| Payment           | `N`   | Clicks Place Order — your purchase is committed |
+
+Four keypresses for the full cart→done flow. Each `N` is a deliberate
+decision; the script does not chain steps automatically. If you stop pressing,
+the flow stops. The red "PAYMENT PAGE — slow down" banner still appears on
+the final page; consider reading it before pressing the last `N`.
 
 The userscript flavor doesn't have access to `chrome.storage` — userscript
 users always get the defaults (everything on). If you need per-feature
