@@ -8,6 +8,8 @@
 
 const SCOUT_ALARM = "scr-scout";
 const KEEPALIVE_ALARM = "scr-keepalive";
+const PREWAVE_ALARM = "scr-prewave";
+const PREWAVE_LEAD_MIN = 5; // notification fires N minutes before each wave
 
 // Storage shape:
 //   scoutShips:        Array<{ id, name, url, lastAvailable, lastChecked, lastTransitionAt, lastError }>
@@ -23,6 +25,21 @@ const DEFAULTS = {
   keepAliveEnabled: true,
 };
 
+// Wave config defaults — kept in sync with content.js DEFAULT_WAVE_CONFIG.
+// (Verified from the DefenseCon 2956 FAQ on 2026-05-11.)
+const DEFAULT_WAVE_CONFIG = {
+  eventName: "DefenseCon 2956",
+  startMs: Date.UTC(2026, 4, 14, 16, 0, 0),
+  endMs:   Date.UTC(2026, 4, 27, 20, 0, 0),
+  waveTimesUtc: [16 * 60, 20 * 60, 0 * 60, 4 * 60, 8 * 60, 12 * 60],
+  limitedShips: [
+    { name: "Drake Kraken",           availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+    { name: "Drake Kraken Privateer", availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+    { name: "Aegis Idris-P",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+    { name: "Aegis Javelin",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+  ],
+};
+
 const ALARM_FLOOR_SEC = 30;       // Chrome's MV3 alarm minimum.
 const FAST_POLL_FLOOR_SEC = 1.5;  // Politeness floor for in-SW setInterval.
 let fastPollHandle = null;        // setInterval handle while in fast mode.
@@ -36,6 +53,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
   if ("scoutEnabled" in changes || "scoutIntervalSec" in changes) reconcileAlarms();
   if ("keepAliveEnabled" in changes) reconcileKeepAlive();
+  if ("waveConfig" in changes || "scoutShips" in changes) schedulePreWaveAlarm();
 });
 
 // Sub-30s polling: setInterval inside the service worker. Chrome will
@@ -76,12 +94,86 @@ async function reconcileAlarms() {
   // Keep-alive alarm — always-on (every minute, marks /cart tabs).
   await chrome.alarms.clear(KEEPALIVE_ALARM);
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 1, delayInMinutes: 0.1 });
+
+  // Pre-wave reminder is computed from waveConfig — schedule next one.
+  await schedulePreWaveAlarm();
+}
+
+// ---------------- Pre-wave reminders ----------------------------------
+
+async function getWaveConfig() {
+  const stored = await chrome.storage.local.get({ waveConfig: null });
+  return stored.waveConfig
+    ? { ...DEFAULT_WAVE_CONFIG, ...stored.waveConfig }
+    : { ...DEFAULT_WAVE_CONFIG };
+}
+
+function computeNextWaveTimestamp(cfg, now = Date.now()) {
+  if (!cfg.eventName) return null;
+  if (now < cfg.startMs) return cfg.startMs;
+  if (now > cfg.endMs)   return null;
+  const today = new Date(now); today.setUTCHours(0, 0, 0, 0);
+  const baseMs = today.getTime();
+  for (let dayOffset = 0; dayOffset < 2; dayOffset++) {
+    for (const minOff of cfg.waveTimesUtc) {
+      const t = baseMs + dayOffset * 86_400_000 + minOff * 60_000;
+      if (t > now && t <= cfg.endMs + 6 * 3_600_000) return t;
+    }
+  }
+  return null;
+}
+
+async function schedulePreWaveAlarm() {
+  await chrome.alarms.clear(PREWAVE_ALARM);
+  const cfg = await getWaveConfig();
+  const nextWaveMs = computeNextWaveTimestamp(cfg);
+  if (!nextWaveMs) return;
+  const fireMs = nextWaveMs - PREWAVE_LEAD_MIN * 60_000;
+  // Only schedule if there's at least a minute of headroom (otherwise we'd
+  // fire and immediately re-schedule the same wave).
+  if (fireMs <= Date.now() + 60_000) {
+    // Re-check 60s after the wave passes to schedule the one after.
+    chrome.alarms.create(PREWAVE_ALARM, { when: nextWaveMs + 60_000 });
+    return;
+  }
+  chrome.alarms.create(PREWAVE_ALARM, { when: fireMs });
+}
+
+async function firePreWaveNotification() {
+  const cfg = await getWaveConfig();
+  const stored = await chrome.storage.local.get({ scoutShips: [] });
+  const watched = (stored.scoutShips || []).filter((s) => {
+    if (!s.name) return false;
+    const lower = s.name.toLowerCase();
+    return cfg.limitedShips.some((w) =>
+      (lower.includes(w.name.toLowerCase()) || w.name.toLowerCase().includes(lower))
+      && Date.now() >= w.availableFromMs,
+    );
+  });
+  const title = watched.length > 0
+    ? `Wave in ${PREWAVE_LEAD_MIN} min — ${watched.length} ship${watched.length === 1 ? "" : "s"} active`
+    : `Wave in ${PREWAVE_LEAD_MIN} min`;
+  const message = watched.length > 0
+    ? `Watching: ${watched.map((s) => s.name).join(", ")}\nGet ready — wave drops in ${PREWAVE_LEAD_MIN} minutes.`
+    : `${cfg.eventName} wave drops in ${PREWAVE_LEAD_MIN} minutes.`;
+  const id = `scr-prewave-${Date.now()}`;
+  await chrome.notifications.create(id, {
+    type: "basic",
+    iconUrl: "icons/icon-128.png",
+    title,
+    message,
+    priority: 2,
+    requireInteraction: true,
+  });
+  // Re-schedule for the next wave.
+  await schedulePreWaveAlarm();
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     if (alarm.name === SCOUT_ALARM) await pollAllScoutShips();
     else if (alarm.name === KEEPALIVE_ALARM) await reconcileKeepAlive();
+    else if (alarm.name === PREWAVE_ALARM) await firePreWaveNotification();
   } catch (err) {
     console.error("[scr] alarm handler error:", err);
   }

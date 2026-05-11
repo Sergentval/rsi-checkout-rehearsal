@@ -184,6 +184,53 @@ payment pages, **R** force refresh, **Esc** hide / show the overlay.
 All hotkeys (except `Esc`) are rebindable in the settings page —
 click the toolbar icon → **Open settings page →**.
 
+### Waves — event-aware countdown + pre-wave reminder
+
+For events like **DefenseCon 2956** that drop limited ships in scheduled
+"waves" (one drop per ship per wave, capped at one purchase per account),
+the extension ships with the official schedule baked in:
+
+| Field             | Value (from the FAQ on 2026-05-11)                           |
+| ----------------- | ------------------------------------------------------------ |
+| Event             | DefenseCon 2956                                              |
+| Window            | May 14 16:00 UTC → May 27 20:00 UTC                          |
+| Wave times (UTC)  | 16:00, 20:00, 00:00, 04:00, 08:00, 12:00 (every 4 h)         |
+| May 14 release    | Drake Kraken, Drake Kraken Privateer                         |
+| May 20 release    | Aegis Idris-P, Aegis Javelin                                 |
+
+The overlay's **Waves** section reads:
+
+```
+WAVES
+Event           DefenseCon 2956
+State           [LIVE]
+Next wave       in 2h 14m → 18:00              ← local time, your locale
+Ship status     Idris-P · drops May 20, 18:00 (8d 2h)
+```
+
+Times are stored as UTC (matches RSI) but displayed in your **browser's
+local time** via `toLocaleString`. The countdown turns amber under 30 min
+and red under 5 min.
+
+A desktop notification fires **5 minutes before each wave** when at least
+one scouted ship is within its release date window:
+
+> Wave in 5 min — 2 ships active
+> Watching: Drake Kraken, Aegis Idris-P
+> Get ready — wave drops in 5 minutes.
+
+You can override the bundled config in the options page (Waves card —
+edit event name, start/end timestamps, wave times, ship list) for future
+events without waiting for an extension update.
+
+### Draggable overlay
+
+The panel's header is a drag handle — click and drag to move it anywhere
+on the page. Position persists across reloads via `chrome.storage.local`
+under `panelPosition`. Reset by clearing extension storage in
+`edge://extensions/` → the panel returns to its default bottom-right
+position on next page load.
+
 ### Scout — browser-side ship-availability watcher
 
 The extension's MV3 service worker (`background.js`) polls a user-selected

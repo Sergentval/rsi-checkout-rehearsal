@@ -28,6 +28,85 @@
   // when running as the extension. In userscript context (Tampermonkey /
   // Violentmonkey) chrome.storage isn't available — we silently fall back
   // to defaults and skip persistence.
+
+  // ---------------- Wave schedule (DefenseCon 2956) ---------------------
+  // Defaults harvested from the live Spectrum FAQ on 2026-05-11:
+  //   /spectrum/community/SC/forum/1/thread/defensecon-2956-faq
+  // User can override via the options page (waveConfig in storage).
+  const DEFAULT_WAVE_CONFIG = {
+    eventName: "DefenseCon 2956",
+    startMs: Date.UTC(2026, 4, 14, 16, 0, 0),
+    endMs:   Date.UTC(2026, 4, 27, 20, 0, 0),
+    // Minutes-from-UTC-midnight for each daily wave (4-hour cadence).
+    waveTimesUtc: [16 * 60, 20 * 60, 0 * 60, 4 * 60, 8 * 60, 12 * 60],
+    limitedShips: [
+      { name: "Drake Kraken",           availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+      { name: "Drake Kraken Privateer", availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+      { name: "Aegis Idris-P",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+      { name: "Aegis Javelin",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+    ],
+  };
+  let waveConfig = { ...DEFAULT_WAVE_CONFIG };
+
+  function computeNextWave(now = Date.now()) {
+    if (now < waveConfig.startMs) {
+      return { state: "before", nextMs: waveConfig.startMs };
+    }
+    if (now > waveConfig.endMs) {
+      return { state: "after", nextMs: null };
+    }
+    const today = new Date(now); today.setUTCHours(0, 0, 0, 0);
+    const baseMs = today.getTime();
+    for (let dayOffset = 0; dayOffset < 2; dayOffset++) {
+      for (const minOff of waveConfig.waveTimesUtc) {
+        const t = baseMs + dayOffset * 86_400_000 + minOff * 60_000;
+        if (t > now && t <= waveConfig.endMs + 6 * 3_600_000) {
+          return { state: "live", nextMs: t };
+        }
+      }
+    }
+    return { state: "live", nextMs: null };
+  }
+
+  function fmtDuration(ms) {
+    if (ms == null || ms <= 0) return "—";
+    const s = Math.floor(ms / 1000);
+    const d = Math.floor(s / 86400);
+    const h = Math.floor((s % 86400) / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (d > 0) return `${d}d ${h}h ${m}m`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+  }
+
+  // Local-time formatters — display uses the user's browser locale, the
+  // underlying timestamps stay in UTC (which is what RSI publishes).
+  function fmtLocalTime(date) {
+    return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+  }
+  function fmtLocalDateTime(date) {
+    return date.toLocaleString(undefined, {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+
+  // For a ship name, find a matching wave-config entry (case-insensitive
+  // substring); return its activation status + earliest drop time, or null.
+  function shipWaveStatus(shipName, now = Date.now()) {
+    if (!shipName) return null;
+    const lower = shipName.toLowerCase();
+    const match = waveConfig.limitedShips.find(
+      (w) => lower.includes(w.name.toLowerCase()) || w.name.toLowerCase().includes(lower),
+    );
+    if (!match) return null;
+    if (now < match.availableFromMs) return { active: false, untilMs: match.availableFromMs, name: match.name };
+    return { active: true, untilMs: null, name: match.name };
+  }
+  // ----------------------------------------------------------------------
+
   const DEFAULT_SETTINGS = {
     showPanel: true,         // bottom-right overlay
     highlightButtons: true,  // pulsing green/orange button outlines
@@ -73,6 +152,26 @@
     } catch { /* keep defaults */ }
   }
 
+  async function loadWaveConfig() {
+    if (!hasChromeStorage()) return;
+    try {
+      const stored = await chrome.storage.local.get({ waveConfig: null });
+      if (stored.waveConfig) Object.assign(waveConfig, stored.waveConfig);
+    } catch { /* keep defaults */ }
+  }
+
+  async function loadPanelPosition() {
+    if (!hasChromeStorage()) return null;
+    try {
+      const stored = await chrome.storage.local.get({ panelPosition: null });
+      return stored.panelPosition;
+    } catch { return null; }
+  }
+  async function savePanelPosition(pos) {
+    if (!hasChromeStorage()) return;
+    try { await chrome.storage.local.set({ panelPosition: pos }); } catch { /* ignore */ }
+  }
+
   function watchSettings(onChange) {
     if (!hasChromeStorage() || !chrome.storage.onChanged) return;
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -83,6 +182,10 @@
       }
       if ("customHotkeys" in changes) {
         Object.assign(hotkeys, HOTKEY_DEFAULTS, changes.customHotkeys.newValue || {});
+        touched = true;
+      }
+      if ("waveConfig" in changes) {
+        Object.assign(waveConfig, DEFAULT_WAVE_CONFIG, changes.waveConfig.newValue || {});
         touched = true;
       }
       if (touched) onChange();
@@ -1090,6 +1193,15 @@
     secStatus.appendChild(mkRow("lockSA",  "Standalone lock"));
     p.appendChild(secStatus);
 
+    // ─── WAVES (event schedule, hidden when no event configured) ────
+    const secWave = mkSection("Waves");
+    secWave.id = "scr-sec-wave";
+    secWave.appendChild(mkRow("wave-event", "Event"));
+    secWave.appendChild(mkRow("wave-state", "State"));
+    secWave.appendChild(mkRow("wave-next",  "Next wave"));
+    secWave.appendChild(mkRow("wave-ship",  "Ship status"));
+    p.appendChild(secWave);
+
     // ─── LATENCY ─────────────────────────────────────────────────────
     const secLat = mkSection("Latency");
     secLat.appendChild(mkRow("lat-site",   "Site (RTT)"));
@@ -1164,8 +1276,68 @@
     if (p) return p;
     p = makePanel();
     document.body.appendChild(p);
+    enableDrag(p);
+    applyStoredPosition(p);
     return p;
   }
+
+  // ---- Draggable panel -----------------------------------------------
+  // Header acts as the drag handle; mousedown switches the panel from
+  // bottom/right positioning to absolute left/top, drag updates position,
+  // mouseup persists. Position survives panel rebuilds and page reloads.
+  function enableDrag(panel) {
+    const handle = panel.querySelector("h4");
+    if (!handle) return;
+    handle.style.cursor = "move";
+    handle.style.userSelect = "none";
+
+    let dragging = false;
+    let startX = 0, startY = 0, startLeft = 0, startTop = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+      // Ignore right/middle clicks
+      if (e.button !== 0) return;
+      dragging = true;
+      const rect = panel.getBoundingClientRect();
+      startX = e.clientX; startY = e.clientY;
+      startLeft = rect.left; startTop = rect.top;
+      // Switch to free positioning so left/top take effect.
+      panel.style.left = `${startLeft}px`;
+      panel.style.top  = `${startTop}px`;
+      panel.style.right = "auto";
+      panel.style.bottom = "auto";
+      e.preventDefault();
+    });
+
+    document.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      const rect = panel.getBoundingClientRect();
+      // Keep at least 40px on screen on each axis.
+      const left = Math.max(-rect.width + 40, Math.min(window.innerWidth - 40, startLeft + dx));
+      const top  = Math.max(0, Math.min(window.innerHeight - 40, startTop + dy));
+      panel.style.left = `${left}px`;
+      panel.style.top  = `${top}px`;
+    });
+
+    document.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      const rect = panel.getBoundingClientRect();
+      savePanelPosition({ left: Math.round(rect.left), top: Math.round(rect.top) });
+    });
+  }
+
+  async function applyStoredPosition(panel) {
+    const pos = await loadPanelPosition();
+    if (!pos) return;
+    panel.style.left = `${pos.left}px`;
+    panel.style.top  = `${pos.top}px`;
+    panel.style.right = "auto";
+    panel.style.bottom = "auto";
+  }
+  // ---------------------------------------------------------------------
 
   function showBanner() {
     if (document.getElementById(BANNER_ID)) return;
@@ -1375,6 +1547,50 @@
       setPill("scr-lockSA", `ARMED — ${r} selected`, "bad");
     } else setPill("scr-lockSA", "OK standalone", "ok");
 
+    // ─── Wave countdown ────────────────────────────────────────────
+    // Hide the section entirely if no event is configured. Otherwise show
+    // local-time formatted next-wave with a duration countdown. Underlying
+    // schedule is UTC (matches RSI's FAQ); display uses the user's locale.
+    const waveSection = document.getElementById("scr-sec-wave");
+    if (!waveConfig.eventName) {
+      if (waveSection) waveSection.style.display = "none";
+    } else {
+      if (waveSection) waveSection.style.display = "";
+      const w = computeNextWave();
+      setText("scr-wave-event", waveConfig.eventName);
+      if (w.state === "before") {
+        setPill("scr-wave-state", "before event", "muted");
+        const d = new Date(w.nextMs);
+        setText("scr-wave-next", `${fmtDuration(w.nextMs - Date.now())} (${fmtLocalDateTime(d)})`);
+      } else if (w.state === "after") {
+        setPill("scr-wave-state", "ended", "muted");
+        setText("scr-wave-next", "—");
+      } else if (w.nextMs) {
+        setPill("scr-wave-state", "LIVE", "ok");
+        const d = new Date(w.nextMs);
+        const remaining = w.nextMs - Date.now();
+        const tier = remaining < 5 * 60_000 ? "bad" : remaining < 30 * 60_000 ? "warn" : "ok";
+        setPill("scr-wave-next", `${fmtDuration(remaining)} → ${fmtLocalTime(d)}`, tier);
+      } else {
+        setPill("scr-wave-state", "LIVE", "ok");
+        setText("scr-wave-next", "no more waves today");
+      }
+      const candidateName = pledge?.ship
+        || analysis?.selected?.subtitle
+        || analysis?.selected?.title;
+      const ss = candidateName ? shipWaveStatus(candidateName) : null;
+      if (ss) {
+        if (ss.active) {
+          setPill("scr-wave-ship", `${ss.name} · active in waves`, "ok");
+        } else {
+          const d = new Date(ss.untilMs);
+          setPill("scr-wave-ship", `${ss.name} · drops ${fmtLocalDateTime(d)} (${fmtDuration(ss.untilMs - Date.now())})`, "warn");
+        }
+      } else {
+        setText("scr-wave-ship", "—");
+      }
+    }
+
     // Latency pills — three separate metrics, each with its own thresholds.
     // Site RTT (network):    <100ms green, <300ms amber, <700ms warn, else bad
     // Client work (script):  <5ms green,   <20ms amber,                else bad
@@ -1492,7 +1708,7 @@
   // Boot: load persisted settings before first render. Latency probe runs
   // fire-and-forget so first paint doesn't wait on a network round-trip.
   (async () => {
-    await Promise.all([loadSettings(), loadHotkeys()]);
+    await Promise.all([loadSettings(), loadHotkeys(), loadWaveConfig()]);
     watchSettings(() => refresh());
     refresh(); // immediate first paint
     if (settings.measureLatency) measureLatency().then(refresh);
