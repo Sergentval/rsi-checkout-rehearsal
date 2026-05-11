@@ -30,6 +30,15 @@
   };
   const settings = { ...DEFAULT_SETTINGS };
 
+  // Hotkey bindings — defaults match the options page. Single lowercase
+  // characters; events compared via e.key.toLowerCase(). Escape stays
+  // fixed as the "hide / show" key (not user-rebindable).
+  const HOTKEY_DEFAULTS = {
+    focus: "f", max: "m", next: "n",
+    add: "a", standalone: "s", cart: "c", refresh: "r",
+  };
+  const hotkeys = { ...HOTKEY_DEFAULTS };
+
   function hasChromeStorage() {
     try { return typeof chrome !== "undefined" && !!chrome.storage?.local; }
     catch { return false; }
@@ -43,6 +52,14 @@
     } catch { /* ignore — keep defaults */ }
   }
 
+  async function loadHotkeys() {
+    if (!hasChromeStorage()) return;
+    try {
+      const stored = await chrome.storage.local.get({ customHotkeys: HOTKEY_DEFAULTS });
+      Object.assign(hotkeys, HOTKEY_DEFAULTS, stored.customHotkeys || {});
+    } catch { /* keep defaults */ }
+  }
+
   function watchSettings(onChange) {
     if (!hasChromeStorage() || !chrome.storage.onChanged) return;
     chrome.storage.onChanged.addListener((changes, area) => {
@@ -50,6 +67,10 @@
       let touched = false;
       for (const [k, v] of Object.entries(changes)) {
         if (k in DEFAULT_SETTINGS) { settings[k] = v.newValue; touched = true; }
+      }
+      if ("customHotkeys" in changes) {
+        Object.assign(hotkeys, HOTKEY_DEFAULTS, changes.customHotkeys.newValue || {});
+        touched = true;
       }
       if (touched) onChange();
     });
@@ -110,21 +131,54 @@
       }
       #${PANEL_ID} {
         position: fixed; right: 12px; bottom: 12px; z-index: 2147483647;
-        background: rgba(8,12,18,0.92); color: #d6e7ff; font: 12px/1.4 ui-monospace, Menlo, monospace;
-        border: 1px solid #1f3550; border-radius: 8px; padding: 10px 12px;
-        min-width: 230px; max-width: 320px;
-        box-shadow: 0 6px 22px rgba(0,0,0,0.45);
-        backdrop-filter: blur(4px);
+        background: rgba(6, 12, 20, 0.94); color: #d6e7ff;
+        font: 12px/1.45 ui-sans-serif, system-ui, sans-serif;
+        border: 1px solid #1f3550; border-radius: 10px; padding: 12px 14px;
+        min-width: 260px; max-width: 340px;
+        box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+        backdrop-filter: blur(6px);
       }
-      #${PANEL_ID} h4 { margin: 0 0 6px; font-size: 12px; color: #6df2a9; letter-spacing: 0.04em; }
-      #${PANEL_ID} .row { display: flex; justify-content: space-between; gap: 8px; }
-      #${PANEL_ID} .k { color: #7ea0c2; }
-      #${PANEL_ID} .v { color: #fff; font-weight: 600; }
-      #${PANEL_ID} .hot { color: #00e676; }
+      #${PANEL_ID} h4 {
+        margin: 0 0 8px; font-size: 12px; color: #6df2a9;
+        letter-spacing: 0.06em; text-transform: uppercase;
+        display: flex; justify-content: space-between; align-items: baseline;
+      }
+      #${PANEL_ID} h4 .ver { color: #5a708a; font-weight: 400; font-size: 10px; letter-spacing: 0; text-transform: none; }
+      #${PANEL_ID} .section {
+        margin-top: 8px; padding-top: 6px;
+        border-top: 1px solid rgba(31, 53, 80, 0.55);
+      }
+      #${PANEL_ID} .section:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+      #${PANEL_ID} .section .sec-title {
+        color: #5a8aae; font-size: 10px; letter-spacing: 0.10em;
+        text-transform: uppercase; margin-bottom: 3px;
+      }
+      #${PANEL_ID} .row { display: flex; justify-content: space-between; gap: 10px; padding: 1px 0; }
+      #${PANEL_ID} .k { color: #7ea0c2; font-size: 11px; }
+      #${PANEL_ID} .v { color: #fff; font-size: 12px; font-weight: 500; text-align: right; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #${PANEL_ID} .v.mono { font-family: ui-monospace, Menlo, monospace; }
+      #${PANEL_ID} .v.dim { color: #6e87a3; font-weight: 400; }
+      #${PANEL_ID} .pill {
+        display: inline-block; padding: 1px 7px; border-radius: 9px;
+        font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+        border: 1px solid currentColor; line-height: 1.4;
+      }
+      #${PANEL_ID} .pill.ok    { color: #00e676; background: rgba(0, 230, 118, 0.10); }
+      #${PANEL_ID} .pill.warn  { color: #ffd166; background: rgba(255, 209, 102, 0.10); }
+      #${PANEL_ID} .pill.bad   { color: #ff6b6b; background: rgba(255, 107, 107, 0.10); }
+      #${PANEL_ID} .pill.muted { color: #7ea0c2; background: rgba(126, 160, 194, 0.06); border-color: #2c4566; }
+      #${PANEL_ID} .hot { color: #6df2a9; font-size: 11px; margin-top: 6px; }
       #${PANEL_ID} kbd {
-        background:#1a2638; border:1px solid #2c4566; border-radius:3px;
-        padding:0 4px; font-size:11px; color:#cfe;
+        background: #15233a; border: 1px solid #2c4566; border-radius: 3px;
+        padding: 1px 5px; font: 600 10px/1.2 ui-monospace, Menlo, monospace;
+        color: #cfe; min-width: 14px; display: inline-block; text-align: center;
       }
+      #${PANEL_ID} .keys {
+        display: flex; flex-wrap: wrap; gap: 4px 6px;
+        margin-top: 6px; padding-top: 6px;
+        border-top: 1px solid rgba(31, 53, 80, 0.55);
+      }
+      #${PANEL_ID} .keys .kx { display: flex; align-items: center; gap: 3px; color: #7ea0c2; font-size: 10px; }
       #${BANNER_ID} {
         position: fixed; top: 0; left: 0; right: 0; z-index: 2147483647;
         background: linear-gradient(90deg,#ff5252,#ff9100);
@@ -808,44 +862,49 @@
   }
   // ---------------------------------------------------------------------
 
+  // ---------------- Panel construction (sectioned, visual) -------------
+  function mkSection(title) {
+    const sec = document.createElement("div");
+    sec.className = "section";
+    const t = document.createElement("div");
+    t.className = "sec-title";
+    t.textContent = title;
+    sec.appendChild(t);
+    return sec;
+  }
+
+  function mkRow(id, label, opts = {}) {
+    const row = document.createElement("div");
+    row.className = "row";
+    const k = document.createElement("span"); k.className = "k"; k.textContent = label;
+    const v = document.createElement("span");
+    v.className = "v" + (opts.mono ? " mono" : "");
+    v.id = `scr-${id}`;
+    v.textContent = "—";
+    row.appendChild(k); row.appendChild(v);
+    return row;
+  }
+
   // Build the panel using DOM methods — no innerHTML, no untrusted content.
   function makePanel() {
     const p = document.createElement("div");
     p.id = PANEL_ID;
 
     const h = document.createElement("h4");
-    h.textContent = "RSI checkout rehearsal";
+    const hLeft = document.createElement("span");
+    hLeft.textContent = "RSI checkout rehearsal";
+    const hRight = document.createElement("span");
+    hRight.className = "ver";
+    hRight.textContent = "scr";
+    h.appendChild(hLeft); h.appendChild(hRight);
     p.appendChild(h);
 
-    const fields = [
-      ["url",      "URL"],
-      ["ship",     "Ship"],
-      ["mode",     "Mode"],
-      ["offers",   "Offers"],
-      ["selopt",   "Selected"],
-      ["buy",      "Buy buttons"],
-      ["co",       "Checkout"],
-      ["sc",       "Store credit"],
-      ["tot",      "Total"],
-      ["prefill",  "SC autofill"],
-      ["max",      "Max button"],
-      ["flow",     "N hotkey"],
-      ["cart",     "A hotkey"],
-      ["lock",     "SC lock"],
-      ["lockSA",   "Standalone lock"],
-      ["lat",      "Latency"],
-    ];
-    for (const [id, label] of fields) {
-      const row = document.createElement("div");
-      row.className = "row";
-      const k = document.createElement("span"); k.className = "k"; k.textContent = label;
-      const v = document.createElement("span"); v.className = "v"; v.id = `scr-${id}`; v.textContent = "—";
-      row.appendChild(k); row.appendChild(v);
-      p.appendChild(row);
-    }
-
-    // Alt-URL row is a clickable link, so it gets its own row outside the
-    // generic span-based loop above. Visibility toggled in refresh().
+    // ─── PAGE ─────────────────────────────────────────────────────────
+    const secPage = mkSection("Page");
+    secPage.appendChild(mkRow("url",  "URL",  { mono: true }));
+    secPage.appendChild(mkRow("ship", "Ship"));
+    secPage.appendChild(mkRow("mode", "Mode"));
+    // Alt-URL row (link). Hidden by default; shown only on pledge pages.
     const altRow = document.createElement("div");
     altRow.className = "row"; altRow.id = "scr-alt-row"; altRow.style.display = "none";
     const altK = document.createElement("span"); altK.className = "k"; altK.textContent = "Alt URL";
@@ -853,23 +912,42 @@
     altA.style.color = "#6df2a9"; altA.style.textDecoration = "underline";
     altA.target = "_self"; altA.rel = "noopener";
     altRow.appendChild(altK); altRow.appendChild(altA);
-    p.appendChild(altRow);
+    secPage.appendChild(altRow);
+    p.appendChild(secPage);
 
-    const hkRow = document.createElement("div");
-    hkRow.className = "row";
-    hkRow.style.marginTop = "6px";
-    const hkK = document.createElement("span"); hkK.className = "k"; hkK.textContent = "Hotkeys";
-    const hkV = document.createElement("span"); hkV.className = "v";
-    for (const [key, label] of [["F", "focus"], ["A", "add"], ["S", "standalone"], ["C", "cart"], ["M", "max"], ["N", "next"], ["R", "refresh"], ["Esc", "hide"]]) {
-      const kbd = document.createElement("kbd"); kbd.textContent = key;
-      hkV.appendChild(kbd);
-      hkV.appendChild(document.createTextNode(` ${label}  `));
-    }
-    hkRow.appendChild(hkK); hkRow.appendChild(hkV);
-    p.appendChild(hkRow);
+    // ─── OFFERS ──────────────────────────────────────────────────────
+    const secOffers = mkSection("Offers");
+    secOffers.appendChild(mkRow("offers", "Count"));
+    secOffers.appendChild(mkRow("selopt", "Selected"));
+    p.appendChild(secOffers);
+
+    // ─── CHECKOUT ────────────────────────────────────────────────────
+    const secCheckout = mkSection("Checkout");
+    secCheckout.appendChild(mkRow("buy", "Buy buttons"));
+    secCheckout.appendChild(mkRow("co",  "Checkout"));
+    secCheckout.appendChild(mkRow("sc",  "Store credit"));
+    secCheckout.appendChild(mkRow("tot", "Total"));
+    p.appendChild(secCheckout);
+
+    // ─── ACTIONS ─────────────────────────────────────────────────────
+    const secStatus = mkSection("Actions");
+    secStatus.appendChild(mkRow("max",     "Max button"));
+    secStatus.appendChild(mkRow("prefill", "SC autofill"));
+    secStatus.appendChild(mkRow("flow",    "Flow"));
+    secStatus.appendChild(mkRow("cart",    "Cart action"));
+    secStatus.appendChild(mkRow("lock",    "SC lock"));
+    secStatus.appendChild(mkRow("lockSA",  "Standalone lock"));
+    secStatus.appendChild(mkRow("lat",     "Latency", { mono: true }));
+    p.appendChild(secStatus);
+
+    // ─── HOTKEYS (rendered fresh each refresh so custom bindings show) ─
+    const keys = document.createElement("div");
+    keys.className = "keys";
+    keys.id = "scr-keys";
+    p.appendChild(keys);
 
     const tip = document.createElement("div");
-    tip.className = "row hot"; tip.id = "scr-tip"; tip.style.marginTop = "6px";
+    tip.className = "hot"; tip.id = "scr-tip";
     p.appendChild(tip);
 
     // Collapsible lookup section.
@@ -946,6 +1024,57 @@
     if (el) el.textContent = value;
   }
 
+  // Set a status cell as a coloured pill. `kind` ∈ ok | warn | bad | muted.
+  // Falls back to plain text if cell is missing.
+  function setPill(id, text, kind) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    while (el.firstChild) el.removeChild(el.firstChild);
+    el.style.color = ""; el.style.fontWeight = "";
+    if (!text || text === "—") {
+      const span = document.createElement("span");
+      span.className = "v dim";
+      span.textContent = "—";
+      el.appendChild(span);
+      return;
+    }
+    const pill = document.createElement("span");
+    pill.className = `pill ${kind || "muted"}`;
+    pill.textContent = text;
+    el.appendChild(pill);
+  }
+
+  // Render the dynamic hotkey legend (so user's custom bindings show up).
+  function renderHotkeysLegend() {
+    const root = document.getElementById("scr-keys");
+    if (!root) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    const order = [
+      ["focus",      "focus"],
+      ["add",        "add"],
+      ["standalone", "standalone"],
+      ["cart",       "cart"],
+      ["max",        "max"],
+      ["next",       "next"],
+      ["refresh",    "refresh"],
+    ];
+    for (const [action, label] of order) {
+      const wrap = document.createElement("span");
+      wrap.className = "kx";
+      const kbd = document.createElement("kbd");
+      const k = hotkeys[action] || "";
+      kbd.textContent = k.length === 1 ? k.toUpperCase() : (k || "?");
+      wrap.appendChild(kbd);
+      wrap.appendChild(document.createTextNode(" " + label));
+      root.appendChild(wrap);
+    }
+    const esc = document.createElement("span");
+    esc.className = "kx";
+    const kEsc = document.createElement("kbd"); kEsc.textContent = "Esc";
+    esc.appendChild(kEsc); esc.appendChild(document.createTextNode(" hide"));
+    root.appendChild(esc);
+  }
+
   function clearButtonHighlights() {
     for (const el of document.querySelectorAll(".scr-buy-hi, .scr-checkout-hi")) {
       el.classList.remove("scr-buy-hi", "scr-checkout-hi");
@@ -1020,58 +1149,68 @@
       if (altRow) altRow.style.display = "none";
     }
 
-    setText("scr-url", location.pathname.slice(0, 32));
+    setText("scr-url", location.pathname.slice(0, 36));
     setText("scr-buy", String(buys.length));
     setText("scr-co", String(cos.length));
     setText("scr-sc", readStoreCredit() ?? "—");
     setText("scr-tot", readCartTotal() ?? "—");
-    setText("scr-prefill", prefillStatus || "—");
-    setText("scr-max", maxStatus || "—");
-    setText("scr-flow", settings.enableFlowHotkey ? (flowStatus || "armed") : "disabled (off)");
-    setText("scr-cart", cartStatus || "—");
+
+    // Max button — green pill on success, muted otherwise.
+    if (!maxStatus || maxStatus === "—") setPill("scr-max", "—", "muted");
+    else if (/applied/i.test(maxStatus))  setPill("scr-max", "applied", "ok");
+    else if (/no Max/i.test(maxStatus))   setPill("scr-max", "not found", "muted");
+    else                                  setPill("scr-max", maxStatus, "muted");
+
+    // SC autofill
+    if (!prefillStatus || prefillStatus === "—") setPill("scr-prefill", "—", "muted");
+    else if (/prefilled/i.test(prefillStatus))   setPill("scr-prefill", "prefilled", "ok");
+    else if (/disabled/i.test(prefillStatus))    setPill("scr-prefill", "off", "muted");
+    else                                         setPill("scr-prefill", prefillStatus.slice(0, 24), "muted");
+
+    // Flow ([N])
+    if (!settings.enableFlowHotkey) setPill("scr-flow", "off", "muted");
+    else if (!flowStatus || flowStatus === "—") setPill("scr-flow", "armed", "warn");
+    else if (/^BLOCKED/.test(flowStatus))       setPill("scr-flow", "BLOCKED", "bad");
+    else if (/^clicked/.test(flowStatus))       setPill("scr-flow", "clicked", "ok");
+    else                                        setPill("scr-flow", flowStatus.slice(0, 22), "muted");
+
+    // Cart ([A] / [C])
+    if (!cartStatus || cartStatus === "—") setPill("scr-cart", "—", "muted");
+    else if (/^BLOCKED/.test(cartStatus))  setPill("scr-cart", "BLOCKED", "bad");
+    else if (/clicked|switched|navigat/i.test(cartStatus)) setPill("scr-cart", cartStatus.slice(0, 26), "ok");
+    else                                    setPill("scr-cart", cartStatus.slice(0, 26), "muted");
 
     // Ship-option detection: paint outlines + report counts.
     const analysis = analyzeShipOptions();
     paintShipOptions(analysis);
     if (!analysis.hasOptions) {
       setText("scr-offers", "—");
-      setText("scr-selopt", "—");
+      setPill("scr-selopt", "—", "muted");
     } else {
       setText(
         "scr-offers",
-        `${analysis.options.length} (${analysis.standalone.length}sa / ${analysis.upgrades.length}up / ${analysis.packs.length}pk)`,
+        `${analysis.options.length} · ${analysis.standalone.length} sa / ${analysis.upgrades.length} up / ${analysis.packs.length} pk`,
       );
       const sel = analysis.selected;
-      const catTag = sel?.isPack ? "PACK" : sel?.isUpgrade ? "UPGRADE" : sel?.isStandalone ? "standalone" : "?";
-      const selLabel = sel ? `${catTag}: ${sel.subtitle || sel.title}` : "none";
-      setText("scr-selopt", selLabel);
-      const selEl = document.getElementById("scr-selopt");
-      if (selEl) selEl.style.color = sel?.isPack ? "#ff6b6b" : sel?.isUpgrade ? "#ffd166" : sel?.isStandalone ? "#6df2a9" : "";
+      const catKind = sel?.isPack ? "bad" : sel?.isUpgrade ? "warn" : sel?.isStandalone ? "ok" : "muted";
+      const subtitle = (sel?.subtitle || sel?.title || "none").slice(0, 26);
+      const tag = sel?.isPack ? "PACK" : sel?.isUpgrade ? "UPGRADE" : sel?.isStandalone ? "standalone" : "?";
+      setPill("scr-selopt", `${tag} · ${subtitle}`, catKind);
     }
 
-    if (!settings.lockStoreCredit) {
-      setText("scr-lock", "disabled (off)");
-    } else {
-      const applied = isStoreCreditApplied();
-      setText("scr-lock", applied ? "OK: credit applied" : "ARMED: blocks Place Order");
-      const lockEl = document.getElementById("scr-lock");
-      if (lockEl) lockEl.style.color = applied ? "#6df2a9" : "#ff6b6b";
-    }
+    if (!settings.lockStoreCredit) setPill("scr-lock", "off", "muted");
+    else if (isStoreCreditApplied()) setPill("scr-lock", "OK applied", "ok");
+    else setPill("scr-lock", "ARMED — blocks Place Order", "bad");
 
-    if (!settings.lockToStandalone) {
-      setText("scr-lockSA", "disabled (off)");
-    } else if (!analysis.hasOptions) {
-      setText("scr-lockSA", "armed (no options visible)");
-    } else if (!analysis.selected?.isStandalone) {
-      const reason = analysis.selected?.isPack ? "pack" : analysis.selected?.isUpgrade ? "upgrade" : "none";
-      setText("scr-lockSA", `ARMED: blocks Add-to-Cart (${reason} selected)`);
-      const e = document.getElementById("scr-lockSA"); if (e) e.style.color = "#ff6b6b";
-    } else {
-      setText("scr-lockSA", "OK: standalone selected");
-      const e = document.getElementById("scr-lockSA"); if (e) e.style.color = "#6df2a9";
-    }
+    if (!settings.lockToStandalone) setPill("scr-lockSA", "off", "muted");
+    else if (!analysis.hasOptions) setPill("scr-lockSA", "armed (no offers)", "warn");
+    else if (!analysis.selected?.isStandalone) {
+      const r = analysis.selected?.isPack ? "pack" : analysis.selected?.isUpgrade ? "upgrade" : "none";
+      setPill("scr-lockSA", `ARMED — ${r} selected`, "bad");
+    } else setPill("scr-lockSA", "OK standalone", "ok");
 
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
+    renderHotkeysLegend();
 
     let tip;
     if (isPaymentPage) {
@@ -1106,13 +1245,14 @@
 
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-    if (e.key === "f" || e.key === "F") { focusNext(); e.preventDefault(); }
-    else if (e.key === "m" || e.key === "M") { tryClickMaxCredit(); refresh(); e.preventDefault(); }
-    else if (e.key === "n" || e.key === "N") { tryClickFlow(); refresh(); e.preventDefault(); }
-    else if (e.key === "a" || e.key === "A") { tryClickAddToCart(); refresh(); e.preventDefault(); }
-    else if (e.key === "c" || e.key === "C") { tryGoToCart(); e.preventDefault(); }
-    else if (e.key === "s" || e.key === "S") { trySelectStandalone(); refresh(); e.preventDefault(); }
-    else if (e.key === "r" || e.key === "R") { refresh(); }
+    const k = (e.key || "").toLowerCase();
+    if (k === hotkeys.focus)           { focusNext();           e.preventDefault(); }
+    else if (k === hotkeys.max)        { tryClickMaxCredit();   refresh(); e.preventDefault(); }
+    else if (k === hotkeys.next)       { tryClickFlow();        refresh(); e.preventDefault(); }
+    else if (k === hotkeys.add)        { tryClickAddToCart();   refresh(); e.preventDefault(); }
+    else if (k === hotkeys.cart)       { tryGoToCart();         e.preventDefault(); }
+    else if (k === hotkeys.standalone) { trySelectStandalone(); refresh(); e.preventDefault(); }
+    else if (k === hotkeys.refresh)    { refresh(); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);
       if (p) p.style.display = p.style.display === "none" ? "" : "none";
@@ -1151,7 +1291,7 @@
   // Boot: load persisted settings before first render. Latency probe runs
   // fire-and-forget so first paint doesn't wait on a network round-trip.
   (async () => {
-    await loadSettings();
+    await Promise.all([loadSettings(), loadHotkeys()]);
     watchSettings(() => refresh());
     refresh(); // immediate first paint
     if (settings.measureLatency) measureLatency().then(refresh);

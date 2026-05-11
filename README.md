@@ -181,6 +181,28 @@ you're using a managed Chrome where extension loading is restricted.
 
 Hotkeys: **F** focus next buy button, **M** click Max-credit button on
 payment pages, **R** force refresh, **Esc** hide / show the overlay.
+All hotkeys (except `Esc`) are rebindable in the settings page —
+click the toolbar icon → **Open settings page →**.
+
+### Settings page
+
+The settings page (`options.html`) is a full-tab UI for toggles, hotkey
+customisation, and reset. Open it via the popup's `Open settings page →`
+button, or right-click the extension icon → Options.
+
+- **Toggles** — same nine toggles as the popup but with descriptions and
+  spacing room. Toggles tagged `ALTERS PURCHASE FLOW` (currently the
+  `[N] hotkey` one) are highlighted so you don't enable them by accident.
+- **Hotkeys** — click any key (e.g. `F`) then press the new key. `Escape`
+  cancels rebinding. Duplicate keys are highlighted red — fix the
+  conflict or the script will fire the first match in F→M→N→A→C→S→R order.
+  `Reset hotkeys to defaults` restores `F/M/N/A/C/S/R`.
+- **Reset all** — wipes toggles + hotkeys + bookmarks. Asks first.
+
+Hotkeys are stored as `customHotkeys` in `chrome.storage.local`. The
+content script reads them on load and re-applies them on
+`chrome.storage.onChanged`, so rebinding takes effect on any open RSI
+tab without reload.
 
 ### Toggles (extension only)
 

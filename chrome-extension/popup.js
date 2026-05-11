@@ -82,6 +82,15 @@
     cb.addEventListener("change", () => saveOne(key, cb.checked));
   }
 
+  // Open the options page (full tab) for hotkey customisation + bigger UI.
+  const openSettings = document.getElementById("open-settings");
+  if (openSettings) {
+    openSettings.addEventListener("click", () => {
+      if (chrome.runtime.openOptionsPage) chrome.runtime.openOptionsPage();
+      else window.open(chrome.runtime.getURL("options.html"));
+    });
+  }
+
   const resetBtn = document.getElementById("reset");
   if (resetBtn) {
     resetBtn.addEventListener("click", async () => {
