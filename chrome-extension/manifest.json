@@ -26,8 +26,14 @@
   "content_scripts": [
     {
       "matches": [
-        "https://robertsspaceindustries.com/*",
-        "https://*.robertsspaceindustries.com/*"
+        "https://robertsspaceindustries.com/pledge/*",
+        "https://robertsspaceindustries.com/*/pledge/*",
+        "https://robertsspaceindustries.com/checkout/*",
+        "https://robertsspaceindustries.com/*/checkout/*",
+        "https://robertsspaceindustries.com/cart*",
+        "https://robertsspaceindustries.com/*/cart*",
+        "https://robertsspaceindustries.com/account/*",
+        "https://robertsspaceindustries.com/*/account/*"
       ],
       "js": ["content.js"],
       "run_at": "document_idle"

@@ -255,10 +255,36 @@ button appearing in the page. The slower panel UI refresh is throttled to
 1.5 s (down from 3 s). First-paint no longer waits on the latency-probe
 HEAD request — it fires-and-forgets and updates the panel when it lands.
 
-### Ship lookup (popup)
+### Where the script runs
 
-The popup includes a search box that queries the live ship-matrix (250+
-ships) and lets you jump to any ship's canonical pledge URL in one click.
+The content script attaches **only** on these URL patterns:
+
+```
+/pledge/*       /<locale>/pledge/*
+/checkout/*     /<locale>/checkout/*
+/cart*          /<locale>/cart*
+/account/*      /<locale>/account/*
+```
+
+It does **not** run on the RSI homepage, Spectrum, comm-link transmissions,
+or any other section. This prevents the script from interfering with
+normal RSI browsing (clicking Home, locale redirects, SPA navigation).
+
+If you SPA-navigate from a non-matching page into a matching one (e.g. from
+the homepage into a pledge page via on-site links), the script may not
+inject — refresh the pledge page once to activate it.
+
+### Ship lookup (in the overlay panel **and** the popup)
+
+Two equivalent UIs:
+
+- **In the overlay panel**: a collapsible `Ship lookup` section at the
+  bottom of the panel. Click the `[+]` header to expand. Search box +
+  bookmarked ships list. Click a ship name to open its canonical pledge
+  URL in a new tab. Star icon toggles bookmark. Works in both extension
+  and userscript flavor (bookmarks persisted via `chrome.storage.local`
+  or `localStorage` respectively).
+- **In the popup**: same data, fuller layout, persistent on toolbar click.
 
 - Type a name (e.g. `Polaris`, `Idris`, `Galaxy`) — case-insensitive, also
   matches manufacturer name (`Aegis`, `Drake`).

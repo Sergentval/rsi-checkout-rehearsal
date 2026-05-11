@@ -3,8 +3,14 @@
 // @namespace    sergent-val.win
 // @version      0.1.0
 // @description  Personal click-helper for RSI pledge / cart / checkout pages. Highlights buy buttons, surfaces store-credit balance, shows latency. Does NOT auto-submit anything.
-// @match        https://robertsspaceindustries.com/*
-// @match        https://*.robertsspaceindustries.com/*
+// @match        https://robertsspaceindustries.com/pledge/*
+// @match        https://robertsspaceindustries.com/*/pledge/*
+// @match        https://robertsspaceindustries.com/checkout/*
+// @match        https://robertsspaceindustries.com/*/checkout/*
+// @match        https://robertsspaceindustries.com/cart*
+// @match        https://robertsspaceindustries.com/*/cart*
+// @match        https://robertsspaceindustries.com/account/*
+// @match        https://robertsspaceindustries.com/*/account/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==

@@ -3,8 +3,14 @@
 // @namespace    sergent-val.win
 // @version      0.1.0
 // @description  Personal click-helper for RSI pledge / cart / checkout pages. Highlights buy buttons, surfaces store-credit balance, shows latency. Does NOT auto-submit anything.
-// @match        https://robertsspaceindustries.com/*
-// @match        https://*.robertsspaceindustries.com/*
+// @match        https://robertsspaceindustries.com/pledge/*
+// @match        https://robertsspaceindustries.com/*/pledge/*
+// @match        https://robertsspaceindustries.com/checkout/*
+// @match        https://robertsspaceindustries.com/*/checkout/*
+// @match        https://robertsspaceindustries.com/cart*
+// @match        https://robertsspaceindustries.com/*/cart*
+// @match        https://robertsspaceindustries.com/account/*
+// @match        https://robertsspaceindustries.com/*/account/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -141,6 +147,37 @@
         padding: 10px 16px; text-align: center; letter-spacing: 0.02em;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
       }
+      #${PANEL_ID} .lookup-header {
+        display: flex; justify-content: space-between; align-items: center;
+        cursor: pointer; user-select: none; margin-top: 8px; padding-top: 6px;
+        border-top: 1px solid #1f3550; color: #6df2a9; font-size: 11px;
+        letter-spacing: 0.04em; text-transform: uppercase;
+      }
+      #${PANEL_ID} .lookup-header .caret { color: #7ea0c2; font-size: 10px; }
+      #${PANEL_ID} .lookup-body { display: none; margin-top: 4px; }
+      #${PANEL_ID} .lookup-body.open { display: block; }
+      #${PANEL_ID} .lookup-input {
+        width: 100%; box-sizing: border-box;
+        background: #0e1c2b; color: #d6e7ff;
+        border: 1px solid #2c4566; border-radius: 4px;
+        padding: 4px 6px; font: inherit; margin-bottom: 4px;
+      }
+      #${PANEL_ID} .lookup-input:focus { outline: none; border-color: #6df2a9; }
+      #${PANEL_ID} .lookup-list { max-height: 200px; overflow-y: auto; }
+      #${PANEL_ID} .lookup-ship {
+        display: flex; align-items: center; gap: 4px; padding: 2px 0;
+        border-bottom: 1px solid #122036; font-size: 11px;
+      }
+      #${PANEL_ID} .lookup-ship:last-child { border-bottom: none; }
+      #${PANEL_ID} .lookup-ship .lname { flex: 1; min-width: 0; color: #fff; cursor: pointer; }
+      #${PANEL_ID} .lookup-ship .lname:hover { color: #6df2a9; text-decoration: underline; }
+      #${PANEL_ID} .lookup-ship .lmfr { color: #7ea0c2; font-size: 9px; }
+      #${PANEL_ID} .lookup-ship .lstar {
+        background: transparent; color: #7ea0c2; border: 0; cursor: pointer;
+        font-size: 12px; padding: 0 2px;
+      }
+      #${PANEL_ID} .lookup-ship .lstar.on { color: #ffd166; }
+      #${PANEL_ID} .lookup-empty { color: #7ea0c2; font-size: 10px; padding: 4px 0; }
     `;
     document.documentElement.appendChild(s);
   }
@@ -423,11 +460,176 @@
   async function measureLatency() {
     try {
       const t0 = performance.now();
-      const res = await fetch("/", { method: "HEAD", cache: "no-store" });
+      // Probe the CURRENT page (HEAD) — guaranteed not to redirect, so we
+      // measure pure round-trip without polluting the user's history or
+      // triggering RSI's locale-redirect chain. Previously hit "/" which
+      // 302s to "/en/" and was implicated in the homepage navigation issue.
+      const res = await fetch(location.pathname + location.search, { method: "HEAD", cache: "no-store" });
       if (!res.ok && res.status !== 0) return;
       latencyMs = Math.round(performance.now() - t0);
     } catch { /* ignore */ }
   }
+
+  // Page-relevance gate. The manifest restricts content_scripts.matches to
+  // pledge/checkout/cart/account, but SPA navigation can land us on other
+  // URLs without re-injecting (since the document isn't reloaded). This
+  // gate makes all in-script work a no-op when the URL drifts to an
+  // irrelevant page — panel hides, no observer work, no fetches.
+  const RELEVANT_PATH_PATTERNS = [
+    /^\/(?:[a-z]{2}\/)?pledge(\/|$)/i,
+    /^\/(?:[a-z]{2}\/)?checkout(\/|$)/i,
+    /^\/(?:[a-z]{2}\/)?cart(\/|\?|$)/i,
+    /^\/(?:[a-z]{2}\/)?account(\/|$)/i,
+  ];
+  function isRelevantPage() {
+    return RELEVANT_PATH_PATTERNS.some((p) => p.test(location.pathname));
+  }
+
+  // ---------------- Ship lookup (overlay-panel section) ----------------
+  // Same data flow as the popup's lookup — fetch ship-matrix once, cache in
+  // chrome.storage.local (or localStorage in userscript context) for 1h,
+  // expose search + bookmarks. Click a ship to open its canonical pledge
+  // URL in a new tab.
+  const LOOKUP_CACHE_KEY = "scr_shipMatrixCache";
+  const LOOKUP_BOOKMARKS_KEY = "scr_bookmarkedShipIds";
+  const LOOKUP_CACHE_TTL_MS = 60 * 60 * 1000;
+  const LOOKUP_SEEDS = [
+    "Idris", "Javelin", "Polaris", "Pioneer", "Banu Merchantman", "Kraken",
+    "Galaxy", "Liberator", "Ironclad", "Carrack", "890 Jump", "BMM",
+  ];
+
+  let lookupShips = [];
+  let lookupBookmarks = new Set();
+  let lookupOpen = false;
+  let lookupLoaded = false;
+
+  // Storage abstraction: chrome.storage.local in the extension, localStorage
+  // in the userscript. Same get/set surface so callers don't branch.
+  async function lookupStorageGet(key) {
+    if (hasChromeStorage()) {
+      try { const v = await chrome.storage.local.get(key); return v[key]; }
+      catch { /* fall through */ }
+    }
+    try {
+      const raw = localStorage.getItem(key);
+      return raw ? JSON.parse(raw) : undefined;
+    } catch { return undefined; }
+  }
+  async function lookupStorageSet(key, value) {
+    if (hasChromeStorage()) {
+      try { await chrome.storage.local.set({ [key]: value }); return; } catch { /* fall */ }
+    }
+    try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* ignore */ }
+  }
+
+  async function lookupFetchMatrix(force = false) {
+    if (!force) {
+      const cached = await lookupStorageGet(LOOKUP_CACHE_KEY);
+      if (cached && Date.now() - cached.ts < LOOKUP_CACHE_TTL_MS) return cached.data;
+    }
+    const res = await fetch("https://robertsspaceindustries.com/ship-matrix/index", {
+      method: "POST",
+      headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`ship-matrix HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.success !== 1 || !Array.isArray(json.data)) throw new Error("unexpected ship-matrix shape");
+    const data = json.data.map((s) => ({
+      id: s.id,
+      name: s.name ?? `ship #${s.id}`,
+      manufacturer: s.manufacturer?.name ?? "",
+      status: s.production_status ?? "",
+      url: typeof s.url === "string" && s.url.startsWith("/")
+        ? `https://robertsspaceindustries.com${s.url}`
+        : null,
+    }));
+    await lookupStorageSet(LOOKUP_CACHE_KEY, { ts: Date.now(), data });
+    return data;
+  }
+
+  function lookupSeedBookmarksFromSeeds() {
+    lookupBookmarks = new Set();
+    for (const seed of LOOKUP_SEEDS) {
+      for (const s of lookupShips) {
+        if (s.name && s.name.toLowerCase().includes(seed.toLowerCase())) {
+          lookupBookmarks.add(s.id);
+        }
+      }
+    }
+  }
+
+  async function lookupLoad() {
+    if (lookupLoaded) return;
+    try {
+      lookupShips = await lookupFetchMatrix();
+      const stored = await lookupStorageGet(LOOKUP_BOOKMARKS_KEY);
+      if (stored === undefined || stored === null) {
+        lookupSeedBookmarksFromSeeds();
+        await lookupStorageSet(LOOKUP_BOOKMARKS_KEY, [...lookupBookmarks]);
+      } else if (Array.isArray(stored)) {
+        lookupBookmarks = new Set(stored);
+      }
+      lookupLoaded = true;
+    } catch (err) {
+      console.warn("[scr] ship-matrix load failed:", err);
+    }
+  }
+
+  function lookupRenderList(rootEl, query) {
+    while (rootEl.firstChild) rootEl.removeChild(rootEl.firstChild);
+    const q = (query || "").trim().toLowerCase();
+    let view;
+    if (q) {
+      view = lookupShips.filter((s) =>
+        s.name.toLowerCase().includes(q) || s.manufacturer.toLowerCase().includes(q),
+      ).slice(0, 20);
+    } else {
+      view = lookupShips.filter((s) => lookupBookmarks.has(s.id))
+        .sort((a, b) => a.name.localeCompare(b.name));
+    }
+    if (view.length === 0) {
+      const e = document.createElement("div");
+      e.className = "lookup-empty";
+      e.textContent = q ? `No ships match "${q}"` : "No bookmarks — type a ship name to search.";
+      rootEl.appendChild(e);
+      return;
+    }
+    for (const s of view) {
+      const row = document.createElement("div");
+      row.className = "lookup-ship";
+
+      const name = document.createElement("span");
+      name.className = "lname";
+      name.title = s.url || s.name;
+      const nameTxt = document.createElement("span");
+      nameTxt.textContent = s.name;
+      const mfr = document.createElement("span");
+      mfr.className = "lmfr";
+      mfr.textContent = s.manufacturer ? `  · ${s.manufacturer}` : "";
+      name.appendChild(nameTxt); name.appendChild(mfr);
+      name.addEventListener("click", () => {
+        if (!s.url) return;
+        window.open(s.url, "_blank", "noopener,noreferrer");
+      });
+      row.appendChild(name);
+
+      const star = document.createElement("button");
+      star.className = "lstar" + (lookupBookmarks.has(s.id) ? " on" : "");
+      star.textContent = lookupBookmarks.has(s.id) ? "★" : "☆";
+      star.title = lookupBookmarks.has(s.id) ? "Unbookmark" : "Bookmark";
+      star.addEventListener("click", async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        if (lookupBookmarks.has(s.id)) lookupBookmarks.delete(s.id);
+        else lookupBookmarks.add(s.id);
+        await lookupStorageSet(LOOKUP_BOOKMARKS_KEY, [...lookupBookmarks]);
+        lookupRenderList(rootEl, query);
+      });
+      row.appendChild(star);
+
+      rootEl.appendChild(row);
+    }
+  }
+  // ---------------------------------------------------------------------
 
   // Build the panel using DOM methods — no innerHTML, no untrusted content.
   function makePanel() {
@@ -489,6 +691,55 @@
     tip.className = "row hot"; tip.id = "scr-tip"; tip.style.marginTop = "6px";
     p.appendChild(tip);
 
+    // Collapsible lookup section.
+    const lookupHeader = document.createElement("div");
+    lookupHeader.className = "lookup-header";
+    const lookupTitle = document.createElement("span");
+    lookupTitle.textContent = "Ship lookup";
+    const lookupCaret = document.createElement("span");
+    lookupCaret.className = "caret";
+    lookupCaret.id = "scr-lookup-caret";
+    lookupCaret.textContent = "[+]";
+    lookupHeader.appendChild(lookupTitle);
+    lookupHeader.appendChild(lookupCaret);
+    p.appendChild(lookupHeader);
+
+    const lookupBody = document.createElement("div");
+    lookupBody.className = "lookup-body";
+    lookupBody.id = "scr-lookup-body";
+    const lookupInput = document.createElement("input");
+    lookupInput.type = "search";
+    lookupInput.className = "lookup-input";
+    lookupInput.placeholder = "Type a ship name (e.g. Polaris)";
+    lookupInput.id = "scr-lookup-input";
+    lookupInput.autocomplete = "off";
+    const lookupList = document.createElement("div");
+    lookupList.className = "lookup-list";
+    lookupList.id = "scr-lookup-list";
+    const lookupHint = document.createElement("div");
+    lookupHint.className = "lookup-empty";
+    lookupHint.textContent = "Loading ship-matrix…";
+    lookupList.appendChild(lookupHint);
+    lookupBody.appendChild(lookupInput);
+    lookupBody.appendChild(lookupList);
+    p.appendChild(lookupBody);
+
+    // Header click toggles open. Load ship-matrix lazily on first expand.
+    lookupHeader.addEventListener("click", async () => {
+      lookupOpen = !lookupOpen;
+      lookupBody.classList.toggle("open", lookupOpen);
+      lookupCaret.textContent = lookupOpen ? "[–]" : "[+]";
+      if (lookupOpen) {
+        await lookupLoad();
+        lookupRenderList(lookupList, lookupInput.value);
+      }
+    });
+    lookupInput.addEventListener("input", () => {
+      lookupRenderList(lookupList, lookupInput.value);
+    });
+    // Don't let M / N / R / F hotkeys fire when typing in the lookup search.
+    lookupInput.addEventListener("keydown", (e) => { e.stopPropagation(); });
+
     return p;
   }
 
@@ -521,6 +772,18 @@
   }
 
   function refresh() {
+    // SPA-navigation safety: if the URL has drifted to a page we don't care
+    // about, hide everything and skip all work. The user clicked a link,
+    // we get out of their way.
+    if (!isRelevantPage()) {
+      const p = document.getElementById(PANEL_ID);
+      if (p) p.style.display = "none";
+      const b = document.getElementById(BANNER_ID);
+      if (b) b.remove();
+      clearButtonHighlights();
+      return;
+    }
+
     injectStyle();
     const buttons = findBuyButtons();
     if (settings.highlightButtons) highlightButtons(buttons);
@@ -651,6 +914,7 @@
     fastPathScheduled = true;
     queueMicrotask(() => {
       fastPathScheduled = false;
+      if (!isRelevantPage()) return;
       const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
       if (isPaymentPage && settings.autoClickMax) tryClickMaxCredit();
     });
