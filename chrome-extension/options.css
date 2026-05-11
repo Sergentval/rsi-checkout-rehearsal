@@ -321,3 +321,58 @@ kbd {
   font: 600 12px/1 ui-monospace, Menlo, monospace;
 }
 .scout-row .remove:hover { background: rgba(255, 82, 82, 0.08); }
+
+/* Wave config editor -------------------------------------------------- */
+
+.wave-form { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field .lbl { color: var(--text); font-size: 13px; }
+.field .local-preview { color: var(--weak); font-size: 11px; font-weight: 400; margin-left: 6px; }
+.field input[type="text"],
+.field input[type="datetime-local"] {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border2);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font: inherit;
+  color-scheme: dark;
+}
+.field input:focus { outline: none; border-color: var(--accent); }
+
+.ships-block { display: flex; flex-direction: column; gap: 6px; }
+.wc-ships { display: flex; flex-direction: column; gap: 6px; }
+.wc-ship-row {
+  display: grid;
+  grid-template-columns: 2fr 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+}
+.wc-ship-row .from-local { color: var(--weak); font-size: 11px; font-family: ui-monospace, Menlo, monospace; }
+.wc-ship-row input { background: var(--surface2); color: var(--text); border: 1px solid var(--border2); border-radius: 4px; padding: 5px 8px; font: inherit; color-scheme: dark; }
+.wc-ship-row button {
+  background: transparent;
+  border: 1px solid rgba(255, 82, 82, 0.4);
+  color: var(--danger);
+  padding: 4px 8px;
+  border-radius: 3px;
+  cursor: pointer;
+  font: 600 12px/1 ui-monospace, Menlo, monospace;
+}
+.wc-ship-row button:hover { background: rgba(255, 82, 82, 0.08); }
+
+#wc-add-ship { align-self: flex-start; margin-top: 2px; }
+
+.btn-primary {
+  background: var(--accent);
+  color: #061218;
+  border: 1px solid var(--accent);
+  padding: 6px 16px;
+  border-radius: 4px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-primary:hover { background: var(--ok); border-color: var(--ok); }

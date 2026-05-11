@@ -493,6 +493,182 @@
 
   initScout();
 
+  // -------- Wave config editor ---------------------------------------
+  // Times entered in UTC (matches RSI's FAQ); displayed in local time
+  // alongside each input via a small preview span.
+  const DEFAULT_WAVE_CONFIG = {
+    eventName: "DefenseCon 2956",
+    startMs: Date.UTC(2026, 4, 14, 16, 0, 0),
+    endMs:   Date.UTC(2026, 4, 27, 20, 0, 0),
+    waveTimesUtc: [16 * 60, 20 * 60, 0, 4 * 60, 8 * 60, 12 * 60],
+    limitedShips: [
+      { name: "Drake Kraken",           availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+      { name: "Drake Kraken Privateer", availableFromMs: Date.UTC(2026, 4, 14, 16, 0, 0) },
+      { name: "Aegis Idris-P",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+      { name: "Aegis Javelin",          availableFromMs: Date.UTC(2026, 4, 20, 16, 0, 0) },
+    ],
+  };
+
+  // ---- UTC helpers --------------------------------------------------
+  // datetime-local inputs use the browser's local timezone by default. We
+  // want them to represent UTC, so we encode/decode manually.
+  const pad2 = (n) => String(n).padStart(2, "0");
+  function utcMsToUtcInputValue(ms) {
+    if (ms == null) return "";
+    const d = new Date(ms);
+    return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}` +
+           `T${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+  }
+  function utcInputValueToMs(v) {
+    if (!v) return null;
+    // Append seconds + Z so JS parses as UTC instead of local.
+    const ms = Date.parse(v.length === 16 ? `${v}:00Z` : `${v}Z`);
+    return Number.isFinite(ms) ? ms : null;
+  }
+  function fmtLocalShort(ms) {
+    if (ms == null) return "—";
+    return new Date(ms).toLocaleString(undefined, {
+      month: "short", day: "numeric",
+      hour: "2-digit", minute: "2-digit",
+    });
+  }
+  function parseWaveTimesStr(s) {
+    const out = [];
+    for (const part of (s || "").split(/[,\s]+/)) {
+      const m = part.match(/^(\d{1,2}):(\d{2})$/);
+      if (!m) continue;
+      const h = Number(m[1]), mn = Number(m[2]);
+      if (h < 0 || h > 23 || mn < 0 || mn > 59) continue;
+      out.push(h * 60 + mn);
+    }
+    return out;
+  }
+  function fmtWaveTimes(mins) {
+    return (mins || []).map((m) => `${pad2(Math.floor(m / 60))}:${pad2(m % 60)}`).join(", ");
+  }
+
+  // ---- Editor rendering ---------------------------------------------
+  let wcShipsDraft = [];
+
+  function renderShipRows() {
+    const root = document.getElementById("wc-ships");
+    if (!root) return;
+    while (root.firstChild) root.removeChild(root.firstChild);
+    wcShipsDraft.forEach((ship, idx) => {
+      const row = document.createElement("div");
+      row.className = "wc-ship-row";
+
+      const name = document.createElement("input");
+      name.type = "text";
+      name.placeholder = "Ship name (e.g. Drake Kraken)";
+      name.value = ship.name || "";
+      name.addEventListener("input", () => { wcShipsDraft[idx].name = name.value; });
+
+      const date = document.createElement("input");
+      date.type = "datetime-local";
+      date.value = utcMsToUtcInputValue(ship.availableFromMs);
+      date.title = "Available-from (UTC). Local: " + fmtLocalShort(ship.availableFromMs);
+      const localSpan = document.createElement("span");
+      localSpan.className = "from-local";
+      localSpan.textContent = fmtLocalShort(ship.availableFromMs);
+      date.addEventListener("change", () => {
+        const ms = utcInputValueToMs(date.value);
+        wcShipsDraft[idx].availableFromMs = ms;
+        localSpan.textContent = fmtLocalShort(ms);
+      });
+
+      const rm = document.createElement("button");
+      rm.textContent = "×";
+      rm.title = "Remove ship";
+      rm.addEventListener("click", () => {
+        wcShipsDraft.splice(idx, 1);
+        renderShipRows();
+      });
+
+      row.appendChild(name);
+      row.appendChild(date);
+      row.appendChild(localSpan);
+      row.appendChild(rm);
+      root.appendChild(row);
+    });
+  }
+
+  function bindLocalPreview(inputId, previewId) {
+    const inp = document.getElementById(inputId);
+    const prev = document.getElementById(previewId);
+    if (!inp || !prev) return;
+    const update = () => {
+      const ms = utcInputValueToMs(inp.value);
+      prev.textContent = ms ? `· local: ${fmtLocalShort(ms)}` : "";
+    };
+    inp.addEventListener("input", update);
+    inp.addEventListener("change", update);
+    update();
+  }
+
+  async function loadWaveConfigEditor(cfg) {
+    const config = cfg || (await chrome.storage.local.get({ waveConfig: null })).waveConfig || DEFAULT_WAVE_CONFIG;
+    document.getElementById("wc-name").value = config.eventName || "";
+    document.getElementById("wc-start").value = utcMsToUtcInputValue(config.startMs);
+    document.getElementById("wc-end").value = utcMsToUtcInputValue(config.endMs);
+    document.getElementById("wc-times").value = fmtWaveTimes(config.waveTimesUtc);
+    wcShipsDraft = (config.limitedShips || []).map((s) => ({ ...s }));
+    renderShipRows();
+    bindLocalPreview("wc-start", "wc-start-local");
+    bindLocalPreview("wc-end", "wc-end-local");
+  }
+
+  document.getElementById("wc-add-ship")?.addEventListener("click", () => {
+    wcShipsDraft.push({ name: "", availableFromMs: null });
+    renderShipRows();
+  });
+
+  document.getElementById("wc-save")?.addEventListener("click", async () => {
+    const eventName = document.getElementById("wc-name").value.trim();
+    const startMs = utcInputValueToMs(document.getElementById("wc-start").value);
+    const endMs = utcInputValueToMs(document.getElementById("wc-end").value);
+    const waveTimesUtc = parseWaveTimesStr(document.getElementById("wc-times").value);
+    const ships = wcShipsDraft
+      .filter((s) => s.name && s.name.trim() && s.availableFromMs)
+      .map((s) => ({ name: s.name.trim(), availableFromMs: s.availableFromMs }));
+
+    if (!eventName)             return toast("event name required");
+    if (!startMs || !endMs)     return toast("start/end dates required");
+    if (endMs <= startMs)       return toast("end must be after start");
+    if (waveTimesUtc.length === 0) return toast("need at least one wave time");
+
+    await chrome.storage.local.set({
+      waveConfig: { eventName, startMs, endMs, waveTimesUtc, limitedShips: ships },
+    });
+    toast(`saved · ${ships.length} ship${ships.length === 1 ? "" : "s"} · ${waveTimesUtc.length} wave times`);
+  });
+
+  document.getElementById("wc-reset")?.addEventListener("click", async () => {
+    if (!confirm("Reset wave config to DefenseCon 2956 defaults?")) return;
+    await chrome.storage.local.remove("waveConfig");
+    await loadWaveConfigEditor(DEFAULT_WAVE_CONFIG);
+    toast("reset to defaults");
+  });
+
+  document.getElementById("wc-open-faq")?.addEventListener("click", async () => {
+    try {
+      await chrome.tabs.create({
+        url: "https://robertsspaceindustries.com/spectrum/community/SC/forum/1/thread/defensecon-2956-faq",
+      });
+    } catch {
+      window.open("https://robertsspaceindustries.com/spectrum/community/SC/forum/1/thread/defensecon-2956-faq", "_blank");
+    }
+  });
+
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area === "local" && "waveConfig" in changes) {
+      loadWaveConfigEditor(changes.waveConfig.newValue);
+    }
+  });
+
+  loadWaveConfigEditor();
+  // ----- end Wave config editor --------------------------------------
+
   document.getElementById("reset-all").addEventListener("click", async () => {
     if (!confirm("Reset all toggles, hotkeys, and bookmarks to defaults?")) return;
     // Wipe + restore defaults for the three managed keys; leave caches intact.

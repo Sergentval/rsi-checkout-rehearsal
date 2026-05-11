@@ -28,6 +28,45 @@
       </section>
 
       <section class="card">
+        <h2>Waves — event schedule</h2>
+        <p class="card-desc">Schedule for wave-based events like DefenseCon. Times are entered in <b>UTC</b> (matches RSI's FAQ) and displayed in your local timezone alongside each field. The default is DefenseCon 2956 — edit when a new event starts.</p>
+
+        <div class="wave-form">
+          <label class="field">
+            <span class="lbl">Event name</span>
+            <input id="wc-name" type="text" placeholder="DefenseCon 2956" />
+          </label>
+
+          <label class="field">
+            <span class="lbl">Window start (UTC) <span class="local-preview" id="wc-start-local"></span></span>
+            <input id="wc-start" type="datetime-local" />
+          </label>
+
+          <label class="field">
+            <span class="lbl">Window end (UTC) <span class="local-preview" id="wc-end-local"></span></span>
+            <input id="wc-end" type="datetime-local" />
+          </label>
+
+          <label class="field">
+            <span class="lbl">Daily wave times — UTC, comma-separated (e.g. 16:00, 20:00, 00:00)</span>
+            <input id="wc-times" type="text" placeholder="16:00, 20:00, 00:00, 04:00, 08:00, 12:00" />
+          </label>
+
+          <div class="ships-block">
+            <span class="lbl">Limited ships</span>
+            <div id="wc-ships" class="wc-ships"></div>
+            <button type="button" id="wc-add-ship" class="btn-secondary">+ Add ship</button>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="wc-save" class="btn-primary">Save schedule</button>
+          <button id="wc-reset" class="btn-secondary">Reset to DefenseCon 2956 defaults</button>
+          <button id="wc-open-faq" class="btn-secondary">Open the FAQ thread ↗</button>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Scout</h2>
         <p class="card-desc">Background watcher that polls each selected ship's pledge URL on a schedule and fires a desktop notification when a sold-out ship becomes available again. Polling runs in the extension's service worker — works while your browser is open.</p>
 
