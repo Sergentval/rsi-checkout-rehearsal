@@ -9,6 +9,7 @@
     scAutofill: true,
     measureLatency: true,
     enableFlowHotkey: false,
+    lockStoreCredit: false,
   };
 
   const setText = (id, v) => {

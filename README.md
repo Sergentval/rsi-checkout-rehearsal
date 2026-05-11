@@ -197,9 +197,30 @@ instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
 | Store-credit input prefill          | regex-based fallback when RSI's Max button isn't present  |
 | Measure latency to RSI              | one HEAD request per refresh (off → no extra traffic)     |
 | [N] hotkey (default **off**)        | press `N` to click the page's primary Continue / Place Order |
+| Lock to store credit (default **off**) | `N` refuses to click Place Order until credit is applied |
 
 There's also a **Reset to defaults** button that flips everything back to its
-default (everything on except `enableFlowHotkey`).
+default (everything on except `enableFlowHotkey` and `lockStoreCredit`).
+
+### Store-credit lock
+
+Off by default — flip it on if you want to **enforce** that every purchase
+uses store credit and not your card. When armed:
+
+- The `N` hotkey gates clicks on `Place Order` / `Confirm` / `Pay` buttons
+  on a check: is store credit actually applied?
+- Detection signals (any one counts as "applied"):
+  1. The script clicked RSI's Max-credit button this page-load.
+  2. The script prefilled the store-credit input (regex fallback).
+  3. Visible page text contains `"store credit applied: $X"` (X > 0) or the
+     order total reads `$0`.
+- If none of the above, `N` refuses to click and flashes the panel red.
+  The panel `SC lock` row shows `ARMED: blocks Place Order` (red) vs
+  `OK: credit applied` (green).
+- **Continue / Next / Checkout / Proceed clicks are unaffected** — the lock
+  only fires on the final commit button.
+
+To bypass once: turn the lock off in the popup and press `N`.
 
 ### The N hotkey
 
@@ -224,6 +245,15 @@ Four keypresses for the full cart→done flow. Each `N` is a deliberate
 decision; the script does not chain steps automatically. If you stop pressing,
 the flow stops. The red "PAYMENT PAGE — slow down" banner still appears on
 the final page; consider reading it before pressing the last `N`.
+
+### Latency
+
+Time-critical actions (Max-credit click) run on a **microtask fast path**
+triggered by every DOM mutation, so they fire within milliseconds of the
+button appearing in the page. The slower panel UI refresh is throttled to
+250 ms (down from 500 ms) and the periodic background refresh runs every
+1.5 s (down from 3 s). First-paint no longer waits on the latency-probe
+HEAD request — it fires-and-forgets and updates the panel when it lands.
 
 The userscript flavor doesn't have access to `chrome.storage` — userscript
 users always get the defaults (everything on). If you need per-feature

@@ -36,6 +36,7 @@
     scAutofill: true,        // regex-based store-credit input prefill (fallback)
     measureLatency: true,    // HEAD request per refresh to time round-trip
     enableFlowHotkey: false, // [N] hotkey clicks the page's primary "next" button
+    lockStoreCredit: false,  // [N] refuses to click Place Order if credit not applied
   };
   const settings = { ...DEFAULT_SETTINGS };
 
@@ -257,6 +258,7 @@
     const formatted = totalStr && totalStr.includes(".") ? total.toFixed(2) : String(total);
     setInputValue(input, formatted);
     prefilled.add(input);
+    creditTouched = true;
     prefillStatus = `prefilled $${formatted} (press Apply manually)`;
     // Briefly flash the input so it's visible the script touched it.
     const prevOutline = input.style.outline;
@@ -312,6 +314,29 @@
     return best;
   }
 
+  // Detect whether store credit is currently applied to the order. Used by
+  // the lockStoreCredit gate so [N] won't click Place Order with credit
+  // silently unapplied. Three positive signals — any of them counts:
+  //   1. We clicked the Max button on this page (clickedMax has any entry).
+  //   2. We successfully prefilled the credit input (prefilled has any entry).
+  //   3. Page text shows "store credit applied" with a non-zero dollar amount.
+  // The text-pattern signal is the most robust against the framework re-creating
+  // button DOM nodes (which would clear our WeakSets but leave the apply in place).
+  let lastCreditApplied = false;
+  function isStoreCreditApplied() {
+    // Signal 1+2: did the script or user touch credit on this page-load?
+    // (WeakSets don't expose size — use a sentinel flag set when we click/fill.)
+    if (creditTouched) return true;
+    // Signal 3: visible text confirms credit will be / has been applied.
+    const txt = (document.body.innerText || "").toLowerCase();
+    if (/store[-\s]?credit[^a-z$]{0,10}applied[^$]{0,20}\$\s*[1-9]/i.test(txt)) return true;
+    if (/applied store[-\s]?credit[^$]{0,20}\$\s*[1-9]/i.test(txt)) return true;
+    // Order total reached zero — credit fully covered the cart.
+    if (/(?:order|grand)\s+total[^$]{0,12}\$\s*0(?:\.0{1,2})?\b/i.test(txt)) return true;
+    return false;
+  }
+  let creditTouched = false; // set true when tryClickMaxCredit or tryPrefillStoreCredit succeeds
+
   let flowStatus = "—";
   function tryClickFlow() {
     if (!settings.enableFlowHotkey) {
@@ -321,6 +346,27 @@
     const btn = findFlowButton();
     if (!btn) { flowStatus = "no Continue/Place-Order button on page"; return false; }
     const label = (btn.innerText || btn.value || btn.getAttribute("aria-label") || "").trim().slice(0, 40);
+
+    // Store-credit lock: when on, refuse to click any "place order / pay /
+    // confirm" button until isStoreCreditApplied() returns true. Continue /
+    // Next / Checkout / Proceed are unaffected — the lock only fires on the
+    // final commit click.
+    const isCommit = /^\s*(place order|confirm( order)?|pay( now)?)\s*$/i.test(label);
+    if (settings.lockStoreCredit && isCommit) {
+      lastCreditApplied = isStoreCreditApplied();
+      if (!lastCreditApplied) {
+        flowStatus = `BLOCKED: "${label}" — store credit not applied`;
+        // Visual feedback: flash the panel border red.
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          const prev = panel.style.border;
+          panel.style.border = "2px solid #ff0033";
+          setTimeout(() => { panel.style.border = prev; }, 1500);
+        }
+        return false;
+      }
+    }
+
     btn.click();
     flowStatus = `clicked: ${label}`;
     const prevOutline = btn.style.outline;
@@ -343,6 +389,7 @@
     }
     btn.click();
     clickedMax.add(btn);
+    creditTouched = true;
     maxStatus = "Max applied";
     // Visible feedback — flash the button green for 1.5s.
     const prevOutline = btn.style.outline;
@@ -402,6 +449,7 @@
       ["prefill",  "SC autofill"],
       ["max",      "Max button"],
       ["flow",     "N hotkey"],
+      ["lock",     "SC lock"],
       ["lat",      "Latency"],
     ];
     for (const [id, label] of fields) {
@@ -536,6 +584,14 @@
     setText("scr-prefill", prefillStatus || "—");
     setText("scr-max", maxStatus || "—");
     setText("scr-flow", settings.enableFlowHotkey ? (flowStatus || "armed") : "disabled (off)");
+    if (!settings.lockStoreCredit) {
+      setText("scr-lock", "disabled (off)");
+    } else {
+      const applied = isStoreCreditApplied();
+      setText("scr-lock", applied ? "OK: credit applied" : "ARMED: blocks Place Order");
+      const lockEl = document.getElementById("scr-lock");
+      if (lockEl) lockEl.style.color = applied ? "#6df2a9" : "#ff6b6b";
+    }
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
 
     let tip;
@@ -581,25 +637,44 @@
     }
   });
 
+  // -------- Latency optimisation -----------------------------------------
+  // Two paths:
+  //   FAST: microtask-scheduled, fires on every DOM mutation. ONLY does the
+  //         idempotent Max-credit click (the time-critical action). Cost is
+  //         a WeakSet membership check per call — negligible.
+  //   SLOW: panel UI refresh, throttled to 250ms (was 500ms). Does the full
+  //         scrape + DOM update; expensive enough to warrant rate-limiting.
+  // ----------------------------------------------------------------------
+  let fastPathScheduled = false;
+  function scheduleFastPath() {
+    if (fastPathScheduled) return;
+    fastPathScheduled = true;
+    queueMicrotask(() => {
+      fastPathScheduled = false;
+      const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
+      if (isPaymentPage && settings.autoClickMax) tryClickMaxCredit();
+    });
+  }
+
   let pending = false;
   const obs = new MutationObserver(() => {
+    scheduleFastPath();
     if (pending) return;
     pending = true;
-    setTimeout(() => { pending = false; refresh(); }, 500);
+    setTimeout(() => { pending = false; refresh(); }, 250);
   });
   obs.observe(document.body, { childList: true, subtree: true });
 
-  // Boot: load persisted settings before first render so we don't flash the
-  // default-on UI for users who toggled things off. Then start the latency
-  // probe (only if enabled) and the refresh interval.
+  // Boot: load persisted settings before first render. Latency probe runs
+  // fire-and-forget so first paint doesn't wait on a network round-trip.
   (async () => {
     await loadSettings();
     watchSettings(() => refresh());
-    if (settings.measureLatency) await measureLatency();
-    refresh();
+    refresh(); // immediate first paint
+    if (settings.measureLatency) measureLatency().then(refresh);
     setInterval(() => {
       if (settings.measureLatency) measureLatency().then(refresh);
       else refresh();
-    }, 3000);
+    }, 1500); // was 3000 — snappier panel updates
   })();
 })();

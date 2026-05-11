@@ -96,6 +96,10 @@
       <input type="checkbox" id="t-enableFlowHotkey">
       <span class="desc">[N] hotkey: click Continue / Place Order <span class="hint">(off by default — this is the one that can complete a purchase)</span></span>
     </label>
+    <label class="toggle" title="When ON, the N hotkey REFUSES to click Place Order / Confirm / Pay unless store credit is actually applied (detected via Max-click, prefill, or visible 'store credit applied' text). Continue/Next clicks are unaffected.">
+      <input type="checkbox" id="t-lockStoreCredit">
+      <span class="desc">Lock to store credit <span class="hint">(blocks Place Order until credit is applied)</span></span>
+    </label>
     <button id="reset">Reset to defaults</button>
 
     <hr />
