@@ -29,21 +29,25 @@
 
   const HOTKEY_DEFAULTS = {
     focus:      "f",
+    view:       "v",
+    standalone: "s",
+    add:        "a",
+    cart:       "c",
     max:        "m",
     next:       "n",
-    add:        "a",
-    standalone: "s",
-    cart:       "c",
+    back:       "b",
     refresh:    "r",
   };
 
   const HOTKEY_META = {
     focus:      { name: "Focus next buy button",           sub: "Scrolls to and focuses the next visible Add-to-Cart / Checkout button." },
+    view:       { name: "Click View Offers",               sub: "Clicks the ship page's “VIEW OFFERS” button to open the offer bottom sheet." },
+    standalone: { name: "Select STANDALONE SHIP option",   sub: "Switches the bottom-sheet selection to the cheapest STANDALONE SHIP." },
+    add:        { name: "Click Add-to-Cart",               sub: "Clicks the bottom-sheet's Add-to-Cart. Gated by Lock to standalone." },
+    cart:       { name: "Go to cart",                      sub: "Clicks the header cart link or navigates to /<locale>/pledge/cart." },
     max:        { name: "Click Max-credit button",         sub: "Clicks RSI's “Apply Max Credit” button on the payment page." },
     next:       { name: "Click Continue / Place Order",    sub: "Clicks the page's primary Continue / Place-Order button. Gated by Lock to store credit." },
-    add:        { name: "Click Add-to-Cart",               sub: "Clicks the bottom-sheet's Add-to-Cart. Gated by Lock to standalone." },
-    standalone: { name: "Select STANDALONE SHIP option",   sub: "Switches the bottom-sheet selection to the cheapest STANDALONE SHIP." },
-    cart:       { name: "Go to cart",                      sub: "Clicks the header cart link or navigates to /<locale>/pledge/cart." },
+    back:       { name: "Go back (escape pack-only ship)", sub: "history.back() when possible; falls back to /<locale>/pledge/ships." },
     refresh:    { name: "Refresh overlay panel",           sub: "Forces a panel rebuild — useful after RSI rerenders the page." },
   };
 

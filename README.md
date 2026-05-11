@@ -225,6 +225,39 @@ instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
 There's also a **Reset to defaults** button that flips everything back to its
 default (everything on except the three lock/hotkey toggles).
 
+### The full keyboard-driven flow
+
+Each step is one keypress, one click. The script doesn't chain steps — if
+you stop pressing, the flow stops.
+
+| Stage                            | Press                          | Effect                                                                  |
+| -------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| Ship page                        | `V`                            | Click `VIEW OFFERS` — opens the bottom sheet                            |
+| Sheet open, pack-only ship       | `B`                            | Back to ship browse — escapes the page                                  |
+| Sheet open, standalone available | `S` (if not already selected)  | Switch selection to the cheapest STANDALONE SHIP                        |
+| Sheet open                       | `A`                            | Click `ADD TO CART` — gated by *Lock to standalone* if armed             |
+| After adding                     | `C`                            | Go to cart (header link or `/<locale>/pledge/cart`)                     |
+| In cart                          | `N`                            | Click Continue / Checkout                                               |
+| Address page                     | `N`                            | Click Continue (RSI's default address stays)                            |
+| Payment page                     | `M`                            | Click `Apply Max Credit`                                                |
+| Payment page                     | `N`                            | Click `Place Order` — gated by *Lock to store credit* if armed          |
+
+Total: 7–8 keypresses for a complete cart→done flow. Each press is your
+explicit decision; the panel's `Next step:` row tells you what to press
+next based on the page state.
+
+### Pack-only banner
+
+When a ship has no STANDALONE SHIP offer (e.g. an 890 Jump that's only sold
+inside Legatus and Praetorian bundles), the script paints a full-width
+amber banner across the top of the page:
+
+> ⚠ 890 Jump is sold ONLY as part of a pack. Press B to go back, or
+> disable "Lock to standalone" in the popup to buy a pack intentionally.
+
+The banner has a × close button if you want to hide it for this page-load.
+It re-appears the next time you open a pack-only ship's offers.
+
 ### Add-to-cart helpers + pack/bundle detection
 
 On any ship-selection bottom sheet (RSI's `.c-optionsItemShip` cards),

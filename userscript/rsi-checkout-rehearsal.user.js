@@ -46,7 +46,9 @@
   // fixed as the "hide / show" key (not user-rebindable).
   const HOTKEY_DEFAULTS = {
     focus: "f", max: "m", next: "n",
-    add: "a", standalone: "s", cart: "c", refresh: "r",
+    add: "a", standalone: "s", cart: "c",
+    view: "v", back: "b",
+    refresh: "r",
   };
   const hotkeys = { ...HOTKEY_DEFAULTS };
 
@@ -197,6 +199,20 @@
         padding: 10px 16px; text-align: center; letter-spacing: 0.02em;
         box-shadow: 0 2px 8px rgba(0,0,0,0.4);
       }
+      #${PACK_BANNER_ID} {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 2147483646;
+        background: linear-gradient(90deg, #ff9100, #ffd166);
+        color: #111; font: 600 13px/1.4 system-ui, sans-serif;
+        padding: 10px 56px 10px 16px; text-align: center; letter-spacing: 0.01em;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+      }
+      #${PACK_BANNER_ID} button {
+        position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+        background: rgba(0,0,0,0.18); color: #111; border: 1px solid rgba(0,0,0,0.3);
+        border-radius: 4px; width: 28px; height: 28px; font: 700 16px/1 system-ui, sans-serif;
+        cursor: pointer; padding: 0;
+      }
+      #${PACK_BANNER_ID} button:hover { background: rgba(0,0,0,0.32); }
       #${PANEL_ID} .lookup-header {
         display: flex; justify-content: space-between; align-items: center;
         cursor: pointer; user-select: none; margin-top: 8px; padding-top: 6px;
@@ -544,6 +560,116 @@
     location.href = `/${locale}/pledge/cart`;
     cartStatus = `navigating to /${locale}/pledge/cart`;
     return true;
+  }
+
+  // [V] — click the "View Offers" button on a ship's pledge page to open
+  // the bottom sheet. Single-click on a user keypress, same shape as M / A.
+  function tryClickViewOffers() {
+    const btn = [...document.querySelectorAll("button")].find((b) => {
+      const txt = (b.querySelector('[data-cy-id="button__text"]')?.innerText || b.innerText || "").trim();
+      if (!/^view offers?$/i.test(txt)) return false;
+      const rect = b.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0 && !b.disabled;
+    });
+    if (!btn) { cartStatus = "no View Offers button on page"; return false; }
+    btn.click();
+    cartStatus = "View Offers clicked";
+    const prev = btn.style.outline;
+    btn.style.outline = "3px solid #00e676";
+    setTimeout(() => { btn.style.outline = prev; }, 1500);
+    return true;
+  }
+
+  // [B] — back. Used to escape a pack-only ship page quickly. Prefers
+  // history.back() so the user keeps their browse-page scroll position;
+  // falls back to the ships-browse URL when there's no history (e.g. when
+  // arriving via a Discord notification deep-link).
+  function goBack() {
+    if (window.history.length > 1) {
+      window.history.back();
+      cartStatus = "back: history.back()";
+    } else {
+      const locale = (location.pathname.match(/^\/([a-z]{2})\//i) || [, "en"])[1];
+      location.href = `/${locale}/pledge/ships`;
+      cartStatus = `back: → /${locale}/pledge/ships`;
+    }
+    return true;
+  }
+  // ----------------------------------------------------------------------
+
+  // ---------------- Pack-only banner -----------------------------------
+  // When the bottom sheet has zero STANDALONE SHIP options, we surface a
+  // top-of-page warning so the user notices BEFORE pressing A. The banner
+  // is dismissible (× button) and re-appears if the sheet stays open.
+  const PACK_BANNER_ID = "scr-pack-banner";
+  let packBannerDismissed = false;
+  let packBannerCurrentShip = null;
+
+  function showPackBanner(shipName) {
+    if (packBannerDismissed && shipName === packBannerCurrentShip) return;
+    packBannerCurrentShip = shipName;
+    if (document.getElementById(PACK_BANNER_ID)) return;
+    const b = document.createElement("div");
+    b.id = PACK_BANNER_ID;
+    b.className = "scr-pack-banner";
+    const text = document.createElement("span");
+    text.textContent = `⚠ ${shipName} is sold ONLY as part of a pack. Press B to go back, or disable “Lock to standalone” in the popup to buy a pack intentionally.`;
+    const close = document.createElement("button");
+    close.textContent = "×";
+    close.title = "dismiss";
+    close.addEventListener("click", (e) => { e.preventDefault(); packBannerDismissed = true; b.remove(); });
+    b.appendChild(text);
+    b.appendChild(close);
+    document.body.appendChild(b);
+  }
+
+  function hidePackBanner() {
+    const b = document.getElementById(PACK_BANNER_ID);
+    if (b) b.remove();
+    packBannerDismissed = false;
+    packBannerCurrentShip = null;
+  }
+  // ----------------------------------------------------------------------
+
+  // ---------------- "Next step" hint computation -----------------------
+  // Returns { msg, kind } for the panel's status tip. Walks the user
+  // through the cart → checkout → pay flow with one suggested keypress
+  // at a time. Pure read-only — no DOM mutations.
+  function computeNextStep(analysis, isPaymentPage, pledge) {
+    if (isPaymentPage) {
+      if (!isStoreCreditApplied()) return { msg: `Press ${hotkeys.max.toUpperCase()} to apply Max credit`, kind: "warn" };
+      return { msg: `Press ${hotkeys.next.toUpperCase()} to Place Order — VERIFY TOTAL FIRST`, kind: "bad" };
+    }
+
+    // Cart page — N continues to checkout
+    if (/^\/(?:[a-z]{2}\/)?(?:pledge\/)?cart/i.test(location.pathname)) {
+      return { msg: `Press ${hotkeys.next.toUpperCase()} to Continue to checkout`, kind: "ok" };
+    }
+
+    // Bottom sheet open
+    if (analysis.hasOptions) {
+      if (analysis.standalone.length === 0) {
+        return { msg: `⚠ Pack-only — press ${hotkeys.back.toUpperCase()} to go back`, kind: "bad" };
+      }
+      if (!analysis.selected?.isStandalone) {
+        return {
+          msg: `Press ${hotkeys.standalone.toUpperCase()} to select STANDALONE, then ${hotkeys.add.toUpperCase()} to add`,
+          kind: "warn",
+        };
+      }
+      return { msg: `Press ${hotkeys.add.toUpperCase()} to Add to Cart`, kind: "ok" };
+    }
+
+    // On a pledge page with a View Offers button visible
+    const hasViewOffers = [...document.querySelectorAll("button")].some((b) => {
+      const txt = (b.querySelector('[data-cy-id="button__text"]')?.innerText || b.innerText || "").trim();
+      return /^view offers?$/i.test(txt) && b.getBoundingClientRect().width > 0;
+    });
+    if (hasViewOffers) return { msg: `Press ${hotkeys.view.toUpperCase()} to View Offers`, kind: "ok" };
+
+    // Pledge browse / other pages — give a passive hint
+    if (pledge) return { msg: "Open a ship's page to start", kind: "muted" };
+    return { msg: "—", kind: "muted" };
   }
   // ----------------------------------------------------------------------
 
@@ -1060,13 +1186,16 @@
     const root = document.getElementById("scr-keys");
     if (!root) return;
     while (root.firstChild) root.removeChild(root.firstChild);
+    // Order follows the typical user flow: discover → buy → checkout → pay.
     const order = [
       ["focus",      "focus"],
-      ["add",        "add"],
+      ["view",       "view"],
       ["standalone", "standalone"],
+      ["add",        "add"],
       ["cart",       "cart"],
       ["max",        "max"],
       ["next",       "next"],
+      ["back",       "back"],
       ["refresh",    "refresh"],
     ];
     for (const [action, label] of order) {
@@ -1221,23 +1350,35 @@
     } else setPill("scr-lockSA", "OK standalone", "ok");
 
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
+
+    // Pack-only banner: show when the bottom sheet is open but has no
+    // standalone option. Hide otherwise (sheet closed or has a standalone).
+    const isPackOnly = analysis.hasOptions && analysis.standalone.length === 0 && analysis.packs.length > 0;
+    if (isPackOnly) {
+      const shipName = pledge?.ship || "This ship";
+      showPackBanner(shipName);
+    } else {
+      hidePackBanner();
+    }
+
+    // Context-aware next-step hint replaces the old static tip.
+    const step = computeNextStep(analysis, isPaymentPage, pledge);
+    const tipEl = document.getElementById("scr-tip");
+    if (tipEl) {
+      tipEl.textContent = step.msg;
+      tipEl.style.color =
+        step.kind === "ok" ? "#6df2a9" :
+        step.kind === "warn" ? "#ffd166" :
+        step.kind === "bad" ? "#ff6b6b" : "#7ea0c2";
+    }
+
     renderHotkeysLegend();
 
-    let tip;
+    // Payment-page banner side-effect (unchanged behaviour, just moved).
     if (isPaymentPage) {
-      tip = "Payment page — read total carefully";
       if (settings.paymentBanner) showBanner();
       else { const b = document.getElementById(BANNER_ID); if (b) b.remove(); }
-    } else if (pledge?.isWarbond) {
-      tip = "WARBOND page — fresh money required";
-    } else if (buys.length > 0) {
-      tip = "Add-to-Cart available — press F to focus";
-    } else if (cos.length > 0) {
-      tip = "Checkout button visible — press F";
-    } else {
-      tip = "No buy buttons in view";
     }
-    setText("scr-tip", tip);
 
     state.buttons = buttons;
   }
@@ -1263,6 +1404,8 @@
     else if (k === hotkeys.add)        { tryClickAddToCart();   refresh(); e.preventDefault(); }
     else if (k === hotkeys.cart)       { tryGoToCart();         e.preventDefault(); }
     else if (k === hotkeys.standalone) { trySelectStandalone(); refresh(); e.preventDefault(); }
+    else if (k === hotkeys.view)       { tryClickViewOffers();  refresh(); e.preventDefault(); }
+    else if (k === hotkeys.back)       { goBack();              e.preventDefault(); }
     else if (k === hotkeys.refresh)    { refresh(); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);
