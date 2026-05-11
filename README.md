@@ -255,6 +255,27 @@ button appearing in the page. The slower panel UI refresh is throttled to
 1.5 s (down from 3 s). First-paint no longer waits on the latency-probe
 HEAD request — it fires-and-forgets and updates the panel when it lands.
 
+### Ship lookup (popup)
+
+The popup includes a search box that queries the live ship-matrix (250+
+ships) and lets you jump to any ship's canonical pledge URL in one click.
+
+- Type a name (e.g. `Polaris`, `Idris`, `Galaxy`) — case-insensitive, also
+  matches manufacturer name (`Aegis`, `Drake`).
+- Each result row shows: ship name, manufacturer, production status
+  (yellow pill for `in-concept` / `announced`, green for `flight-ready`).
+- `Open` opens the canonical pledge URL in a new tab.
+- `☆ / ★` toggles a bookmark — bookmarked ships appear at the top when the
+  search box is empty. Bookmarks persist in `chrome.storage.local`.
+
+On first install, bookmarks are seeded with the well-known limited-availability
+ships from prior RSI sales: `Idris`, `Javelin`, `Polaris`, `Pioneer`,
+`BMM` / `Banu Merchantman`, `Kraken`, `Galaxy`, `Liberator`, `Ironclad`,
+`Carrack`, `890 Jump`. You can star/unstar to customise.
+
+ship-matrix data is cached in `chrome.storage.local` for one hour; click
+`refresh` to force-pull the latest.
+
 The userscript flavor doesn't have access to `chrome.storage` — userscript
 users always get the defaults (everything on). If you need per-feature
 toggles, use the extension flavor.
