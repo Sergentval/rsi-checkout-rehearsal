@@ -257,22 +257,16 @@ HEAD request — it fires-and-forgets and updates the panel when it lands.
 
 ### Where the script runs
 
-The content script attaches **only** on these URL patterns:
+The content script attaches on every page of `robertsspaceindustries.com`
+**except the homepage** (`/`, `/en/`, `/fr/`, etc.). The homepage exclusion
+is in-script (not in the manifest) so SPA navigation between pages works
+without needing a page refresh — the script is already loaded, it just
+toggles the panel on/off as you move around the site.
 
-```
-/pledge/*       /<locale>/pledge/*
-/checkout/*     /<locale>/checkout/*
-/cart*          /<locale>/cart*
-/account/*      /<locale>/account/*
-```
-
-It does **not** run on the RSI homepage, Spectrum, comm-link transmissions,
-or any other section. This prevents the script from interfering with
-normal RSI browsing (clicking Home, locale redirects, SPA navigation).
-
-If you SPA-navigate from a non-matching page into a matching one (e.g. from
-the homepage into a pledge page via on-site links), the script may not
-inject — refresh the pledge page once to activate it.
+This keeps the panel visible on pledge, checkout, cart, account, Spectrum,
+comm-link, news, ship-matrix browse, and any other RSI page you visit. If
+you don't want the panel on a specific section, flip the `Show overlay panel`
+toggle off in the popup.
 
 ### Ship lookup (in the overlay panel **and** the popup)
 

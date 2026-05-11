@@ -3,14 +3,8 @@
 // @namespace    sergent-val.win
 // @version      0.1.0
 // @description  Personal click-helper for RSI pledge / cart / checkout pages. Highlights buy buttons, surfaces store-credit balance, shows latency. Does NOT auto-submit anything.
-// @match        https://robertsspaceindustries.com/pledge/*
-// @match        https://robertsspaceindustries.com/*/pledge/*
-// @match        https://robertsspaceindustries.com/checkout/*
-// @match        https://robertsspaceindustries.com/*/checkout/*
-// @match        https://robertsspaceindustries.com/cart*
-// @match        https://robertsspaceindustries.com/*/cart*
-// @match        https://robertsspaceindustries.com/account/*
-// @match        https://robertsspaceindustries.com/*/account/*
+// @match        https://robertsspaceindustries.com/*
+// @match        https://*.robertsspaceindustries.com/*
 // @run-at       document-idle
 // @grant        none
 // ==/UserScript==
@@ -470,19 +464,17 @@
     } catch { /* ignore */ }
   }
 
-  // Page-relevance gate. The manifest restricts content_scripts.matches to
-  // pledge/checkout/cart/account, but SPA navigation can land us on other
-  // URLs without re-injecting (since the document isn't reloaded). This
-  // gate makes all in-script work a no-op when the URL drifts to an
-  // irrelevant page — panel hides, no observer work, no fetches.
-  const RELEVANT_PATH_PATTERNS = [
-    /^\/(?:[a-z]{2}\/)?pledge(\/|$)/i,
-    /^\/(?:[a-z]{2}\/)?checkout(\/|$)/i,
-    /^\/(?:[a-z]{2}\/)?cart(\/|\?|$)/i,
-    /^\/(?:[a-z]{2}\/)?account(\/|$)/i,
+  // Page-relevance gate. Manifest matches are wide (anything on RSI) so the
+  // script attaches everywhere, but this gate hides the panel + skips all
+  // work on the homepage / locale root — the pages where prior versions of
+  // the script were interfering with RSI's locale-redirect on link clicks.
+  // Returns false ONLY for homepage-shaped URLs; everything else is fair game.
+  const HOMEPAGE_PATTERNS = [
+    /^\/?$/,              //  ""  or  "/"
+    /^\/[a-z]{2}\/?$/i,   //  "/en", "/en/", "/fr", etc.
   ];
   function isRelevantPage() {
-    return RELEVANT_PATH_PATTERNS.some((p) => p.test(location.pathname));
+    return !HOMEPAGE_PATTERNS.some((p) => p.test(location.pathname));
   }
 
   // ---------------- Ship lookup (overlay-panel section) ----------------
