@@ -387,7 +387,7 @@
     // Briefly flash the input so it's visible the script touched it.
     const prevOutline = input.style.outline;
     input.style.outline = "3px solid #00e676";
-    setTimeout(() => { input.style.outline = prevOutline; }, 1500);
+    setTimeout(() => { input.style.outline = prevOutline; }, 700);
   }
 
   // ---------------- Pack vs standalone detection ------------------------
@@ -507,7 +507,7 @@
         if (panel) {
           const prev = panel.style.border;
           panel.style.border = "2px solid #ff0033";
-          setTimeout(() => { panel.style.border = prev; }, 1500);
+          setTimeout(() => { panel.style.border = prev; }, 700);
         }
         return false;
       }
@@ -518,7 +518,7 @@
     cartStatus = "Add-to-Cart clicked";
     const prev = btn.style.outline;
     btn.style.outline = "3px solid #00e676";
-    setTimeout(() => { btn.style.outline = prev; }, 1500);
+    setTimeout(() => { btn.style.outline = prev; }, 700);
     return true;
   }
 
@@ -565,7 +565,7 @@
     cartStatus = "View Offers clicked";
     const prev = btn.style.outline;
     btn.style.outline = "3px solid #00e676";
-    setTimeout(() => { btn.style.outline = prev; }, 1500);
+    setTimeout(() => { btn.style.outline = prev; }, 700);
     return true;
   }
 
@@ -757,7 +757,7 @@
         if (panel) {
           const prev = panel.style.border;
           panel.style.border = "2px solid #ff0033";
-          setTimeout(() => { panel.style.border = prev; }, 1500);
+          setTimeout(() => { panel.style.border = prev; }, 700);
         }
         return false;
       }
@@ -767,7 +767,7 @@
     flowStatus = `clicked: ${label}`;
     const prevOutline = btn.style.outline;
     btn.style.outline = "3px solid #ff9100";
-    setTimeout(() => { btn.style.outline = prevOutline; }, 1500);
+    setTimeout(() => { btn.style.outline = prevOutline; }, 700);
     return true;
   }
 
@@ -790,7 +790,7 @@
     // Visible feedback — flash the button green for 1.5s.
     const prevOutline = btn.style.outline;
     btn.style.outline = "3px solid #00e676";
-    setTimeout(() => { btn.style.outline = prevOutline; }, 1500);
+    setTimeout(() => { btn.style.outline = prevOutline; }, 700);
     return true;
   }
 
@@ -815,18 +815,32 @@
     };
   }
 
-  let latencyMs = null;
+  // ---- Latency telemetry ------------------------------------------------
+  // Three separately-tracked numbers, each with its own color tier:
+  //   siteLatencyMs    HEAD round-trip to the current page (network)
+  //   clientLatencyMs  duration of the most recent refresh() call (script)
+  //   actionLatencyMs  keydown → click + refresh complete (perceived feel)
+  // Tiers map ms ranges to ok / warn / bad pills via latencyPill().
+  let siteLatencyMs = null;
+  let clientLatencyMs = null;
+  let actionLatencyMs = null;
+  let actionLatencyLabel = "—";
+
   async function measureLatency() {
     try {
       const t0 = performance.now();
-      // Probe the CURRENT page (HEAD) — guaranteed not to redirect, so we
-      // measure pure round-trip without polluting the user's history or
-      // triggering RSI's locale-redirect chain. Previously hit "/" which
-      // 302s to "/en/" and was implicated in the homepage navigation issue.
       const res = await fetch(location.pathname + location.search, { method: "HEAD", cache: "no-store" });
       if (!res.ok && res.status !== 0) return;
-      latencyMs = Math.round(performance.now() - t0);
+      siteLatencyMs = Math.round(performance.now() - t0);
     } catch { /* ignore */ }
+  }
+
+  // Pill kind for a latency value, given threshold tier (ok | warn | bad).
+  function latencyTier(ms, t1, t2) {
+    if (ms == null) return "muted";
+    if (ms <= t1) return "ok";
+    if (ms <= t2) return "warn";
+    return "bad";
   }
 
   // Page-relevance gate. Manifest matches are wide (anything on RSI) so the
@@ -1063,8 +1077,14 @@
     secStatus.appendChild(mkRow("cart",    "Cart action"));
     secStatus.appendChild(mkRow("lock",    "SC lock"));
     secStatus.appendChild(mkRow("lockSA",  "Standalone lock"));
-    secStatus.appendChild(mkRow("lat",     "Latency", { mono: true }));
     p.appendChild(secStatus);
+
+    // ─── LATENCY ─────────────────────────────────────────────────────
+    const secLat = mkSection("Latency");
+    secLat.appendChild(mkRow("lat-site",   "Site (RTT)"));
+    secLat.appendChild(mkRow("lat-client", "Client (refresh)"));
+    secLat.appendChild(mkRow("lat-action", "Last action"));
+    p.appendChild(secLat);
 
     // ─── HOTKEYS (rendered fresh each refresh so custom bindings show) ─
     const keys = document.createElement("div");
@@ -1211,6 +1231,12 @@
   }
 
   function refresh() {
+    const t0 = performance.now();
+    refreshBody();
+    clientLatencyMs = +(performance.now() - t0).toFixed(1);
+  }
+
+  function refreshBody() {
     // SPA-navigation safety: if the URL has drifted to a page we don't care
     // about, hide everything and skip all work. The user clicked a link,
     // we get out of their way.
@@ -1338,7 +1364,19 @@
       setPill("scr-lockSA", `ARMED — ${r} selected`, "bad");
     } else setPill("scr-lockSA", "OK standalone", "ok");
 
-    setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
+    // Latency pills — three separate metrics, each with its own thresholds.
+    // Site RTT (network):    <100ms green, <300ms amber, <700ms warn, else bad
+    // Client work (script):  <5ms green,   <20ms amber,                else bad
+    // Action (perceived):    <10ms green,  <50ms amber,                else bad
+    setPill("scr-lat-site",
+      siteLatencyMs == null ? "—" : `${siteLatencyMs} ms`,
+      latencyTier(siteLatencyMs, 100, 300));
+    setPill("scr-lat-client",
+      clientLatencyMs == null ? "—" : `${clientLatencyMs} ms`,
+      latencyTier(clientLatencyMs, 5, 20));
+    setPill("scr-lat-action",
+      actionLatencyMs == null ? "—" : `${actionLatencyLabel} · ${actionLatencyMs} ms`,
+      latencyTier(actionLatencyMs, 10, 50));
 
     // Pack-only banner: show when the bottom sheet is open but has no
     // standalone option. Hide otherwise (sheet closed or has a standalone).
@@ -1384,18 +1422,27 @@
     }
   }
 
+  // Wrap a hotkey action so we record actionLatencyMs (keydown → done).
+  function runHotkey(label, fn, withRefresh = true) {
+    const t0 = performance.now();
+    fn();
+    if (withRefresh) refresh();
+    actionLatencyMs = +(performance.now() - t0).toFixed(1);
+    actionLatencyLabel = label;
+  }
+
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     const k = (e.key || "").toLowerCase();
-    if (k === hotkeys.focus)           { focusNext();           e.preventDefault(); }
-    else if (k === hotkeys.max)        { tryClickMaxCredit();   refresh(); e.preventDefault(); }
-    else if (k === hotkeys.next)       { tryClickFlow();        refresh(); e.preventDefault(); }
-    else if (k === hotkeys.add)        { tryClickAddToCart();   refresh(); e.preventDefault(); }
-    else if (k === hotkeys.cart)       { tryGoToCart();         e.preventDefault(); }
-    else if (k === hotkeys.standalone) { trySelectStandalone(); refresh(); e.preventDefault(); }
-    else if (k === hotkeys.view)       { tryClickViewOffers();  refresh(); e.preventDefault(); }
-    else if (k === hotkeys.back)       { goBack();              e.preventDefault(); }
-    else if (k === hotkeys.refresh)    { refresh(); }
+    if (k === hotkeys.focus)           { runHotkey("focus",      focusNext, false); e.preventDefault(); }
+    else if (k === hotkeys.max)        { runHotkey("max",        tryClickMaxCredit); e.preventDefault(); }
+    else if (k === hotkeys.next)       { runHotkey("next",       tryClickFlow); e.preventDefault(); }
+    else if (k === hotkeys.add)        { runHotkey("add",        tryClickAddToCart); e.preventDefault(); }
+    else if (k === hotkeys.cart)       { runHotkey("cart",       tryGoToCart, false); e.preventDefault(); }
+    else if (k === hotkeys.standalone) { runHotkey("standalone", trySelectStandalone); e.preventDefault(); }
+    else if (k === hotkeys.view)       { runHotkey("view",       tryClickViewOffers); e.preventDefault(); }
+    else if (k === hotkeys.back)       { runHotkey("back",       goBack, false); e.preventDefault(); }
+    else if (k === hotkeys.refresh)    { runHotkey("refresh",    () => {}); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);
       if (p) p.style.display = p.style.display === "none" ? "" : "none";

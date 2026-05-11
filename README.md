@@ -378,14 +378,28 @@ decision; the script does not chain steps automatically. If you stop pressing,
 the flow stops. The red "PAYMENT PAGE — slow down" banner still appears on
 the final page; consider reading it before pressing the last `N`.
 
-### Latency
+### Latency telemetry
 
 Time-critical actions (Max-credit click) run on a **microtask fast path**
 triggered by every DOM mutation, so they fire within milliseconds of the
-button appearing in the page. The slower panel UI refresh is throttled to
-250 ms (down from 500 ms) and the periodic background refresh runs every
-1.5 s (down from 3 s). First-paint no longer waits on the latency-probe
-HEAD request — it fires-and-forgets and updates the panel when it lands.
+button appearing. The slower panel UI refresh is throttled to 250 ms and
+the periodic background refresh runs every 1.5 s. Highlight flashes after
+clicks were tuned down to 700 ms for snappier visual response.
+
+The overlay's **Latency** section shows three independently-measured
+numbers, each color-tiered:
+
+| Metric             | What it measures                                   | Green   | Amber       | Red      |
+| ------------------ | -------------------------------------------------- | ------- | ----------- | -------- |
+| Site (RTT)         | HEAD round-trip to the current page                | ≤100 ms | ≤300 ms     | >300 ms  |
+| Client (refresh)   | Time taken by the most recent `refresh()` call     | ≤5 ms   | ≤20 ms      | >20 ms   |
+| Last action        | Keydown → click + refresh complete (perceived feel) | ≤10 ms  | ≤50 ms      | >50 ms   |
+
+If `Site (RTT)` is red, you have a slow link / RSI is slow — neither
+fixable here. If `Client (refresh)` is red, the page has so many DOM nodes
+that scanning is expensive — possibly RSI rerendering during the refresh.
+If `Last action` is red but the other two are green, the bottleneck is
+in the click handler (RSI's React, not our code).
 
 ### Where the script runs
 
