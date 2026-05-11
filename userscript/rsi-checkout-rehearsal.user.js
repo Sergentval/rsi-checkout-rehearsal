@@ -37,6 +37,7 @@
     measureLatency: true,    // HEAD request per refresh to time round-trip
     enableFlowHotkey: false, // [N] hotkey clicks the page's primary "next" button
     lockStoreCredit: false,  // [N] refuses to click Place Order if credit not applied
+    lockToStandalone: false, // [A] refuses Add-to-Cart when the selected option is a pack
   };
   const settings = { ...DEFAULT_SETTINGS };
 
@@ -172,6 +173,25 @@
       }
       #${PANEL_ID} .lookup-ship .lstar.on { color: #ffd166; }
       #${PANEL_ID} .lookup-empty { color: #7ea0c2; font-size: 10px; padding: 4px 0; }
+      .scr-opt-pack {
+        outline: 3px solid #ff5252 !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 6px rgba(255, 82, 82, 0.18) !important;
+      }
+      .scr-opt-pack::before {
+        content: "⚠ PACK / BUNDLE";
+        position: absolute; top: 6px; right: 6px;
+        background: #ff5252; color: #111;
+        font: 700 10px/1 system-ui, sans-serif;
+        padding: 3px 6px; border-radius: 3px; letter-spacing: 0.04em;
+        z-index: 1;
+        pointer-events: none;
+      }
+      .scr-opt-standalone {
+        outline: 3px solid #00e676 !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 6px rgba(0, 230, 118, 0.20) !important;
+      }
     `;
     document.documentElement.appendChild(s);
   }
@@ -296,6 +316,145 @@
     input.style.outline = "3px solid #00e676";
     setTimeout(() => { input.style.outline = prevOutline; }, 1500);
   }
+
+  // ---------------- Pack vs standalone detection ------------------------
+  // RSI's ship-selection bottom sheet (.orion-c-bottomSheet__content) lists
+  // one or more `c-optionsItemShip` cards. Some are standalone ships, some
+  // are large bundles ("Legatus 2953" with 188 ships, "Praetorian Pack" with
+  // 30 ships, etc.). A misclick on "Add to cart" while a bundle is selected
+  // can cost you €41k instead of €890. The detector flags each option as
+  // pack-or-standalone, the panel surfaces the result, and lockToStandalone
+  // refuses the [A] hotkey if a pack is currently selected.
+  // ----------------------------------------------------------------------
+  const PACK_KEYWORDS = [
+    /pack\b/i, /bundle\b/i, /collection\b/i, /legatus/i, /anniversary/i,
+    /praetorian/i, /pioneer.?pledge/i, /completionist/i,
+  ];
+
+  function findShipOptions() {
+    return [...document.querySelectorAll(".c-optionsItemShip")];
+  }
+
+  function classifyShipOption(el) {
+    const title = el.querySelector(".c-optionsItemShip__title")?.innerText.trim() ?? "";
+    const subtitle = el.querySelector(".c-optionsItemShip__subtitle")?.innerText.trim() ?? "";
+    const priceText = el.querySelector(".a-priceUnit__amount")?.innerText.trim() ?? "";
+    const bodyItems = [...el.querySelectorAll(".c-optionsItemShip__bodyPledgeListContent p")]
+      .map((p) => p.innerText.trim());
+    const isSelected = el.classList.contains("-selected");
+
+    // Pack signal 1: body item "N Ships" with N > 1.
+    let shipCount = 0;
+    for (const item of bodyItems) {
+      const m = item.match(/^(\d+)\s+ships?\b/i);
+      if (m) { const n = Number(m[1]); if (n > shipCount) shipCount = n; }
+    }
+
+    // Pack signal 2: subtitle contains a known pack keyword.
+    const hasPackKeyword = PACK_KEYWORDS.some((re) => re.test(subtitle));
+
+    // Pack signal 3: very high price (>€2000 typically indicates a bundle).
+    const priceNum = Number((priceText.match(/[\d,]+/) || [""])[0].replace(/,/g, "")) || 0;
+    const highPrice = priceNum > 2000;
+
+    const isPack = shipCount > 1 || hasPackKeyword || highPrice;
+    return { el, title, subtitle, priceText, priceNum, shipCount, isPack, isSelected };
+  }
+
+  function analyzeShipOptions() {
+    const opts = findShipOptions().map(classifyShipOption);
+    return {
+      options: opts,
+      hasOptions: opts.length > 0,
+      selected: opts.find((o) => o.isSelected) ?? null,
+      standalone: opts.filter((o) => !o.isPack),
+      packs: opts.filter((o) => o.isPack),
+    };
+  }
+
+  // Visual feedback: outline packs in red, standalone in green. Idempotent
+  // — class additions overwrite prior runs, no buildup.
+  function paintShipOptions(analysis) {
+    for (const o of analysis.options) {
+      o.el.classList.toggle("scr-opt-pack", o.isPack);
+      o.el.classList.toggle("scr-opt-standalone", !o.isPack);
+    }
+  }
+
+  // ---------------- Add-to-Cart + cart-nav helpers ----------------------
+  function findAddToCartButton() {
+    // Match the exact RSI shape first.
+    for (const b of document.querySelectorAll("button")) {
+      const txt = (b.querySelector('[data-cy-id="button__text"]')?.innerText || b.innerText || "").trim();
+      if (/^add to cart$/i.test(txt)) {
+        const rect = b.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0 && !b.disabled) return b;
+      }
+    }
+    return null;
+  }
+
+  function findCartNavLink() {
+    // Header cart link: anchor whose href ends with /cart or aria-label "cart".
+    for (const el of document.querySelectorAll('a[href*="/cart"], a[aria-label*="cart" i], button[aria-label*="cart" i]')) {
+      const rect = el.getBoundingClientRect();
+      if (rect.width === 0) continue;
+      return el;
+    }
+    return null;
+  }
+
+  let cartStatus = "—";
+  function tryClickAddToCart() {
+    const analysis = analyzeShipOptions();
+    if (settings.lockToStandalone && analysis.hasOptions) {
+      const sel = analysis.selected;
+      if (sel && sel.isPack) {
+        cartStatus = `BLOCKED: pack selected (${sel.subtitle || sel.title})`;
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          const prev = panel.style.border;
+          panel.style.border = "2px solid #ff0033";
+          setTimeout(() => { panel.style.border = prev; }, 1500);
+        }
+        return false;
+      }
+    }
+    const btn = findAddToCartButton();
+    if (!btn) { cartStatus = "no Add-to-Cart button on page"; return false; }
+    btn.click();
+    cartStatus = "Add-to-Cart clicked";
+    const prev = btn.style.outline;
+    btn.style.outline = "3px solid #00e676";
+    setTimeout(() => { btn.style.outline = prev; }, 1500);
+    return true;
+  }
+
+  function trySelectStandalone() {
+    const analysis = analyzeShipOptions();
+    if (analysis.standalone.length === 0) {
+      cartStatus = "no standalone option to switch to";
+      return false;
+    }
+    // Pick the cheapest standalone, click its title (the -isClickable element).
+    const target = [...analysis.standalone].sort((a, b) => a.priceNum - b.priceNum)[0];
+    const clickable = target.el.querySelector(".c-optionsItemShip__title.-isClickable, .c-optionsItemShip__subtitleContainer.-isClickable")
+      || target.el;
+    clickable.click();
+    cartStatus = `switched to standalone: ${target.subtitle || target.title}`;
+    return true;
+  }
+
+  function tryGoToCart() {
+    const link = findCartNavLink();
+    if (link) { link.click(); cartStatus = "clicked cart link"; return true; }
+    // Fallback: direct navigation. Locale prefix derived from current path.
+    const locale = (location.pathname.match(/^\/([a-z]{2})\//i) || [, "en"])[1];
+    location.href = `/${locale}/pledge/cart`;
+    cartStatus = `navigating to /${locale}/pledge/cart`;
+    return true;
+  }
+  // ----------------------------------------------------------------------
 
   // RSI's checkout has an "Apply Max Credit" button that auto-fills the
   // store-credit amount input with min(available_credit, cart_total). This
@@ -636,6 +795,8 @@
       ["url",      "URL"],
       ["ship",     "Ship"],
       ["mode",     "Mode"],
+      ["offers",   "Offers"],
+      ["selopt",   "Selected"],
       ["buy",      "Buy buttons"],
       ["co",       "Checkout"],
       ["sc",       "Store credit"],
@@ -643,7 +804,9 @@
       ["prefill",  "SC autofill"],
       ["max",      "Max button"],
       ["flow",     "N hotkey"],
+      ["cart",     "A hotkey"],
       ["lock",     "SC lock"],
+      ["lockSA",   "Standalone lock"],
       ["lat",      "Latency"],
     ];
     for (const [id, label] of fields) {
@@ -671,7 +834,7 @@
     hkRow.style.marginTop = "6px";
     const hkK = document.createElement("span"); hkK.className = "k"; hkK.textContent = "Hotkeys";
     const hkV = document.createElement("span"); hkV.className = "v";
-    for (const [key, label] of [["F", "focus"], ["M", "max"], ["N", "next"], ["R", "refresh"], ["Esc", "hide"]]) {
+    for (const [key, label] of [["F", "focus"], ["A", "add"], ["S", "standalone"], ["C", "cart"], ["M", "max"], ["N", "next"], ["R", "refresh"], ["Esc", "hide"]]) {
       const kbd = document.createElement("kbd"); kbd.textContent = key;
       hkV.appendChild(kbd);
       hkV.appendChild(document.createTextNode(` ${label}  `));
@@ -839,6 +1002,23 @@
     setText("scr-prefill", prefillStatus || "—");
     setText("scr-max", maxStatus || "—");
     setText("scr-flow", settings.enableFlowHotkey ? (flowStatus || "armed") : "disabled (off)");
+    setText("scr-cart", cartStatus || "—");
+
+    // Ship-option detection: paint outlines + report counts.
+    const analysis = analyzeShipOptions();
+    paintShipOptions(analysis);
+    if (!analysis.hasOptions) {
+      setText("scr-offers", "—");
+      setText("scr-selopt", "—");
+    } else {
+      setText("scr-offers", `${analysis.options.length} (${analysis.standalone.length} standalone / ${analysis.packs.length} pack)`);
+      const sel = analysis.selected;
+      const selLabel = sel ? `${sel.isPack ? "PACK" : "standalone"}: ${sel.subtitle || sel.title}` : "none";
+      setText("scr-selopt", selLabel);
+      const selEl = document.getElementById("scr-selopt");
+      if (selEl) selEl.style.color = sel?.isPack ? "#ff6b6b" : (sel ? "#6df2a9" : "");
+    }
+
     if (!settings.lockStoreCredit) {
       setText("scr-lock", "disabled (off)");
     } else {
@@ -847,6 +1027,19 @@
       const lockEl = document.getElementById("scr-lock");
       if (lockEl) lockEl.style.color = applied ? "#6df2a9" : "#ff6b6b";
     }
+
+    if (!settings.lockToStandalone) {
+      setText("scr-lockSA", "disabled (off)");
+    } else if (!analysis.hasOptions) {
+      setText("scr-lockSA", "armed (no options visible)");
+    } else if (analysis.selected?.isPack) {
+      setText("scr-lockSA", "ARMED: blocks Add-to-Cart (pack selected)");
+      const e = document.getElementById("scr-lockSA"); if (e) e.style.color = "#ff6b6b";
+    } else {
+      setText("scr-lockSA", "OK: standalone selected");
+      const e = document.getElementById("scr-lockSA"); if (e) e.style.color = "#6df2a9";
+    }
+
     setText("scr-lat", latencyMs == null ? "—" : `${latencyMs} ms`);
 
     let tip;
@@ -885,6 +1078,9 @@
     if (e.key === "f" || e.key === "F") { focusNext(); e.preventDefault(); }
     else if (e.key === "m" || e.key === "M") { tryClickMaxCredit(); refresh(); e.preventDefault(); }
     else if (e.key === "n" || e.key === "N") { tryClickFlow(); refresh(); e.preventDefault(); }
+    else if (e.key === "a" || e.key === "A") { tryClickAddToCart(); refresh(); e.preventDefault(); }
+    else if (e.key === "c" || e.key === "C") { tryGoToCart(); e.preventDefault(); }
+    else if (e.key === "s" || e.key === "S") { trySelectStandalone(); refresh(); e.preventDefault(); }
     else if (e.key === "r" || e.key === "R") { refresh(); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);

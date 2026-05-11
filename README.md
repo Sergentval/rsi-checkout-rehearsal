@@ -198,9 +198,44 @@ instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
 | Measure latency to RSI              | one HEAD request per refresh (off → no extra traffic)     |
 | [N] hotkey (default **off**)        | press `N` to click the page's primary Continue / Place Order |
 | Lock to store credit (default **off**) | `N` refuses to click Place Order until credit is applied |
+| Lock to standalone ship (default **off**) | `A` refuses to click Add-to-Cart if a pack is selected |
 
 There's also a **Reset to defaults** button that flips everything back to its
-default (everything on except `enableFlowHotkey` and `lockStoreCredit`).
+default (everything on except the three lock/hotkey toggles).
+
+### Add-to-cart helpers + pack/bundle detection
+
+On any ship-selection bottom sheet (RSI's `.c-optionsItemShip` cards),
+the script automatically:
+
+- **Outlines each option**: green for standalone ships, red for packs /
+  bundles, with a `⚠ PACK / BUNDLE` corner badge on the red ones.
+- **Detects pack** if the option's body lists more than one ship
+  (e.g. "188 Ships"), the subtitle contains a pack keyword
+  (`Pack`, `Bundle`, `Collection`, `Legatus`, `Anniversary`, `Praetorian`,
+  `Completionist`), or the price exceeds €2000.
+- **Reports in the panel**: `Offers: 2 (0 standalone / 2 pack)`,
+  `Selected: PACK: Legatus 2953` (red) or `Selected: standalone: 890 Jump`
+  (green).
+
+New hotkeys:
+
+| Key | Action                                                                              |
+| --- | ----------------------------------------------------------------------------------- |
+| `A` | Click `Add to cart` on the current bottom sheet (gated by `Lock to standalone`)     |
+| `S` | Switch selection to the cheapest standalone option (if one exists)                  |
+| `C` | Go to cart — clicks the header cart link or navigates to `/<locale>/pledge/cart`    |
+
+### Lock to standalone
+
+Off by default. When armed, the `A` hotkey **refuses** to click Add-to-Cart
+if the currently selected option is a pack. The panel `Standalone lock` row
+shows `OK: standalone selected` (green) vs `ARMED: blocks Add-to-Cart (pack
+selected)` (red). To buy a pack intentionally, flip the toggle off in the
+popup.
+
+This is the cart-side equivalent of `Lock to store credit` on the payment
+side — both refuse one specific commit click when a precondition isn't met.
 
 ### Store-credit lock
 

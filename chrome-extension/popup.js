@@ -10,6 +10,7 @@
     measureLatency: true,
     enableFlowHotkey: false,
     lockStoreCredit: false,
+    lockToStandalone: false,
   };
 
   const setText = (id, v) => {
