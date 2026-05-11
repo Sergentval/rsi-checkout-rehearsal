@@ -195,7 +195,9 @@ sold-out ship becomes available again. Set up in the options page →
 - **Keep cart / checkout tabs alive** — marks `/cart` and `/checkout` tabs
   as `autoDiscardable=false` so Chrome doesn't unload them mid-purchase.
   Default on.
-- **Poll every** — interval (30 s default; Chrome enforces a 30 s floor).
+- **Poll every** — interval. Two tiers:
+  - **Normal** (30 s / 1 m / 2 m / 5 m) uses `chrome.alarms` — low overhead, survives service-worker death.
+  - **Fast** (1.5 s / 3 s / 5 s / 10 s) uses `setInterval` inside the service worker. Politeness floor is **1.5 s**. The options page shows a live "~N requests/min total" warning so you can see your rate vs your scout list size before committing to it. If Chrome kills the idle SW, a 30 s heartbeat alarm restarts it.
 - **Search box** — type a ship name (matches the live ship-matrix), click
   `+` to add to the scout list.
 - **Currently scouting** — per-row status dot (green = available, red =

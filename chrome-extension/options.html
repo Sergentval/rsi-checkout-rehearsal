@@ -44,15 +44,23 @@
             </span>
           </label>
           <div class="scout-interval">
-            <label for="scoutIntervalMin">Poll every</label>
-            <select id="scoutIntervalMin">
-              <option value="0.5">30 seconds</option>
-              <option value="1">1 minute</option>
-              <option value="2">2 minutes</option>
-              <option value="5">5 minutes</option>
+            <label for="scoutIntervalSec">Poll every</label>
+            <select id="scoutIntervalSec">
+              <optgroup label="Fast (in-SW setInterval, polite floor 1.5 s)">
+                <option value="1.5">1.5 seconds  ⚠ rapid</option>
+                <option value="3">3 seconds  ⚠ rapid</option>
+                <option value="5">5 seconds</option>
+                <option value="10">10 seconds</option>
+              </optgroup>
+              <optgroup label="Normal (chrome.alarms, 30 s floor)">
+                <option value="30">30 seconds</option>
+                <option value="60">1 minute</option>
+                <option value="120">2 minutes</option>
+                <option value="300">5 minutes</option>
+              </optgroup>
             </select>
-            <span class="hint inline-hint">Chrome enforces a minimum of 30 s for service-worker alarms.</span>
           </div>
+          <p class="hint" id="scout-rate-warning" style="margin: 6px 0 0;"></p>
         </div>
 
         <div class="scout-add">

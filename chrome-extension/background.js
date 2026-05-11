@@ -12,15 +12,20 @@ const KEEPALIVE_ALARM = "scr-keepalive";
 // Storage shape:
 //   scoutShips:        Array<{ id, name, url, lastAvailable, lastChecked, lastTransitionAt, lastError }>
 //   scoutEnabled:      boolean    (default true)
-//   scoutIntervalMin:  number     (default 0.5 = 30 seconds; min 0.5 due to MV3 alarm limit)
+//   scoutIntervalSec:  number     (default 30; min 1.5; ≥30 uses chrome.alarms,
+//                                  <30 uses setInterval inside the SW)
 //   keepAliveEnabled:  boolean    (default true) — non-discardable cart tabs
 
 const DEFAULTS = {
   scoutShips: [],
   scoutEnabled: true,
-  scoutIntervalMin: 0.5,
+  scoutIntervalSec: 30,
   keepAliveEnabled: true,
 };
+
+const ALARM_FLOOR_SEC = 30;       // Chrome's MV3 alarm minimum.
+const FAST_POLL_FLOOR_SEC = 1.5;  // Politeness floor for in-SW setInterval.
+let fastPollHandle = null;        // setInterval handle while in fast mode.
 
 // ---------------- Lifecycle -------------------------------------------
 
@@ -29,19 +34,46 @@ chrome.runtime.onStartup?.addListener(reconcileAlarms);
 
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local") return;
-  if ("scoutEnabled" in changes || "scoutIntervalMin" in changes) reconcileAlarms();
+  if ("scoutEnabled" in changes || "scoutIntervalSec" in changes) reconcileAlarms();
   if ("keepAliveEnabled" in changes) reconcileKeepAlive();
 });
 
+// Sub-30s polling: setInterval inside the service worker. Chrome will
+// terminate the SW after ~30s of idle; the SCOUT_ALARM (always running at
+// the alarm-floor cadence) restarts the SW, which re-invokes
+// reconcileAlarms() on startup and re-creates the interval. So fast-poll
+// resumes within ~30s of any SW death.
+function startFastPoll(intervalSec) {
+  stopFastPoll();
+  const sec = Math.max(FAST_POLL_FLOOR_SEC, Number(intervalSec) || FAST_POLL_FLOOR_SEC);
+  fastPollHandle = setInterval(() => {
+    pollAllScoutShips().catch((err) => console.error("[scr] fast poll err:", err));
+  }, sec * 1000);
+}
+
+function stopFastPoll() {
+  if (fastPollHandle) { clearInterval(fastPollHandle); fastPollHandle = null; }
+}
+
 async function reconcileAlarms() {
-  const { scoutEnabled, scoutIntervalMin } = await chrome.storage.local.get(DEFAULTS);
+  const { scoutEnabled, scoutIntervalSec } = await chrome.storage.local.get(DEFAULTS);
   await chrome.alarms.clear(SCOUT_ALARM);
+  stopFastPoll();
+
   if (scoutEnabled) {
-    const period = Math.max(0.5, Number(scoutIntervalMin) || 0.5);
-    chrome.alarms.create(SCOUT_ALARM, { periodInMinutes: period, delayInMinutes: 0.05 });
+    const sec = Math.max(FAST_POLL_FLOOR_SEC, Number(scoutIntervalSec) || 30);
+    if (sec < ALARM_FLOOR_SEC) {
+      // Fast tier — setInterval inside the SW, plus a 30s heartbeat alarm
+      // that wakes the SW back up if Chrome killed it for being idle.
+      startFastPoll(sec);
+      chrome.alarms.create(SCOUT_ALARM, { periodInMinutes: 0.5, delayInMinutes: 0.05 });
+    } else {
+      // Slow tier — chrome.alarms is sufficient. No setInterval needed.
+      chrome.alarms.create(SCOUT_ALARM, { periodInMinutes: sec / 60, delayInMinutes: 0.05 });
+    }
   }
-  // Keep-alive alarm is always set when the feature is on (every minute,
-  // touches non-discardable flag on /cart tabs).
+
+  // Keep-alive alarm — always-on (every minute, marks /cart tabs).
   await chrome.alarms.clear(KEEPALIVE_ALARM);
   chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 1, delayInMinutes: 0.1 });
 }

@@ -228,7 +228,7 @@
   const SCOUT_DEFAULTS = {
     scoutShips: [],
     scoutEnabled: true,
-    scoutIntervalMin: 0.5,
+    scoutIntervalSec: 30,
     keepAliveEnabled: true,
   };
 
@@ -395,13 +395,52 @@
   }
 
   async function loadScoutBehaviour() {
-    const stored = await chrome.storage.local.get(SCOUT_DEFAULTS);
+    // Migrate from old scoutIntervalMin (minutes) → scoutIntervalSec (seconds).
+    const stored = await chrome.storage.local.get({
+      ...SCOUT_DEFAULTS,
+      scoutIntervalMin: null, // legacy key
+    });
+    if (stored.scoutIntervalSec == null && stored.scoutIntervalMin != null) {
+      stored.scoutIntervalSec = Math.round(Number(stored.scoutIntervalMin) * 60);
+      await chrome.storage.local.set({ scoutIntervalSec: stored.scoutIntervalSec });
+      await chrome.storage.local.remove("scoutIntervalMin");
+    }
+
     const en = document.getElementById("t-scoutEnabled");
     const ka = document.getElementById("t-keepAliveEnabled");
-    const iv = document.getElementById("scoutIntervalMin");
+    const iv = document.getElementById("scoutIntervalSec");
+    const warn = document.getElementById("scout-rate-warning");
     if (en) en.checked = !!stored.scoutEnabled;
     if (ka) ka.checked = !!stored.keepAliveEnabled;
-    if (iv) iv.value = String(stored.scoutIntervalMin);
+    if (iv) iv.value = String(stored.scoutIntervalSec ?? 30);
+
+    function updateRateWarning() {
+      if (!warn || !iv) return;
+      const sec = Number(iv.value);
+      getScoutShips().then((ships) => {
+        const n = ships.length;
+        while (warn.firstChild) warn.removeChild(warn.firstChild);
+        if (sec < 30 && n > 0) {
+          const rpm = Math.round((60 / sec) * n);
+          warn.appendChild(document.createTextNode("⚠ ~"));
+          const b = document.createElement("b");
+          b.textContent = `${rpm} requests/min`;
+          warn.appendChild(b);
+          warn.appendChild(document.createTextNode(
+            ` total (${n} ship${n === 1 ? "" : "s"} × ${(60 / sec).toFixed(1)}/min). ` +
+            "Polite floor is 1.5 s. Excessive polling may get your IP rate-limited by RSI.",
+          ));
+          warn.style.color = "#ffd166";
+        } else if (sec >= 30) {
+          warn.textContent = "Chrome's MV3 alarm floor is 30 s — intervals ≥30 s use chrome.alarms (low overhead, survives SW death).";
+          warn.style.color = "var(--weak, #7ea0c2)";
+        } else {
+          warn.textContent = "Fast tier uses setInterval inside the service worker. Heartbeat alarm restarts it within ~30 s if Chrome kills the SW.";
+          warn.style.color = "var(--weak, #7ea0c2)";
+        }
+      });
+    }
+    updateRateWarning();
 
     en?.addEventListener("change", async () => {
       await chrome.storage.local.set({ scoutEnabled: en.checked });
@@ -412,8 +451,14 @@
       toast(`keep-alive ${ka.checked ? "on" : "off"}`);
     });
     iv?.addEventListener("change", async () => {
-      await chrome.storage.local.set({ scoutIntervalMin: Number(iv.value) });
-      toast(`poll interval: ${iv.options[iv.selectedIndex].textContent}`);
+      await chrome.storage.local.set({ scoutIntervalSec: Number(iv.value) });
+      toast(`poll interval: ${iv.options[iv.selectedIndex].textContent.trim().replace(/\s*⚠.*/, "")}`);
+      updateRateWarning();
+    });
+
+    // Recalculate the rate warning whenever the scout list changes size.
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && "scoutShips" in changes) updateRateWarning();
     });
   }
 
