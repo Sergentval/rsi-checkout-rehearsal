@@ -71,6 +71,7 @@
     /^\s*add to cart\s*$/i,
     /^\s*buy\b/i,
     /^\s*pledge\b/i,
+    /^\s*view offers?\s*$/i,            // RSI's ship-page CTA opens the bottom sheet
     /^\s*checkout\s*$/i,
     /^\s*proceed to checkout\s*$/i,
     /^\s*place order\s*$/i,
@@ -191,6 +192,19 @@
         outline: 3px solid #00e676 !important;
         outline-offset: 2px !important;
         box-shadow: 0 0 0 6px rgba(0, 230, 118, 0.20) !important;
+      }
+      .scr-opt-upgrade {
+        outline: 3px solid #ffd166 !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 6px rgba(255, 209, 102, 0.16) !important;
+      }
+      .scr-opt-upgrade::before {
+        content: "ℹ UPGRADE (requires source ship)";
+        position: absolute; top: 6px; right: 6px;
+        background: #ffd166; color: #111;
+        font: 700 10px/1 system-ui, sans-serif;
+        padding: 3px 6px; border-radius: 3px; letter-spacing: 0.04em;
+        z-index: 1; pointer-events: none;
       }
     `;
     document.documentElement.appendChild(s);
@@ -343,22 +357,36 @@
       .map((p) => p.innerText.trim());
     const isSelected = el.classList.contains("-selected");
 
-    // Pack signal 1: body item "N Ships" with N > 1.
-    let shipCount = 0;
-    for (const item of bodyItems) {
-      const m = item.match(/^(\d+)\s+ships?\b/i);
-      if (m) { const n = Number(m[1]); if (n > shipCount) shipCount = n; }
+    // RSI labels each option's category in the title field — use it directly.
+    // Verified live values: "STANDALONE SHIP", "UPGRADE", "PACKAGE".
+    // (My old heuristic — ship-count, subtitle keywords, price — is kept as
+    // a fallback for unknown titles like sale-specific labels.)
+    let category;
+    if (/^STANDALONE SHIP$/i.test(title)) category = "standalone";
+    else if (/^UPGRADE$/i.test(title)) category = "upgrade";
+    else if (/^PACKAGE$/i.test(title) || /^PACK$/i.test(title)) category = "pack";
+    else {
+      // Heuristic fallback
+      let shipCount = 0;
+      for (const item of bodyItems) {
+        const m = item.match(/^(\d+)\s+ships?\b/i);
+        if (m) { const n = Number(m[1]); if (n > shipCount) shipCount = n; }
+      }
+      const priceNum = Number((priceText.match(/[\d,]+/) || [""])[0].replace(/,/g, "")) || 0;
+      const hasPackKeyword = PACK_KEYWORDS.some((re) => re.test(subtitle));
+      if (shipCount > 1 || hasPackKeyword || priceNum > 2000) category = "pack";
+      else category = "standalone";
     }
 
-    // Pack signal 2: subtitle contains a known pack keyword.
-    const hasPackKeyword = PACK_KEYWORDS.some((re) => re.test(subtitle));
-
-    // Pack signal 3: very high price (>€2000 typically indicates a bundle).
     const priceNum = Number((priceText.match(/[\d,]+/) || [""])[0].replace(/,/g, "")) || 0;
-    const highPrice = priceNum > 2000;
-
-    const isPack = shipCount > 1 || hasPackKeyword || highPrice;
-    return { el, title, subtitle, priceText, priceNum, shipCount, isPack, isSelected };
+    return {
+      el, title, subtitle, priceText, priceNum,
+      category,                    // 'standalone' | 'upgrade' | 'pack'
+      isStandalone: category === "standalone",
+      isUpgrade: category === "upgrade",
+      isPack: category === "pack",
+      isSelected,
+    };
   }
 
   function analyzeShipOptions() {
@@ -367,17 +395,19 @@
       options: opts,
       hasOptions: opts.length > 0,
       selected: opts.find((o) => o.isSelected) ?? null,
-      standalone: opts.filter((o) => !o.isPack),
+      standalone: opts.filter((o) => o.isStandalone),
+      upgrades: opts.filter((o) => o.isUpgrade),
       packs: opts.filter((o) => o.isPack),
     };
   }
 
-  // Visual feedback: outline packs in red, standalone in green. Idempotent
-  // — class additions overwrite prior runs, no buildup.
+  // Visual feedback: outline packs in red, upgrades in amber, standalone in
+  // green. Idempotent — class additions overwrite prior runs, no buildup.
   function paintShipOptions(analysis) {
     for (const o of analysis.options) {
       o.el.classList.toggle("scr-opt-pack", o.isPack);
-      o.el.classList.toggle("scr-opt-standalone", !o.isPack);
+      o.el.classList.toggle("scr-opt-standalone", o.isStandalone);
+      o.el.classList.toggle("scr-opt-upgrade", o.isUpgrade);
     }
   }
 
@@ -409,8 +439,11 @@
     const analysis = analyzeShipOptions();
     if (settings.lockToStandalone && analysis.hasOptions) {
       const sel = analysis.selected;
-      if (sel && sel.isPack) {
-        cartStatus = `BLOCKED: pack selected (${sel.subtitle || sel.title})`;
+      // Strict: standalone only. Pack and Upgrade both blocked, with
+      // different messages so the user knows what to do.
+      if (!sel || !sel.isStandalone) {
+        const reason = sel?.isPack ? "pack selected" : sel?.isUpgrade ? "upgrade selected" : "no standalone selected";
+        cartStatus = `BLOCKED: ${reason}${sel ? ` (${sel.subtitle || sel.title})` : ""}`;
         const panel = document.getElementById(PANEL_ID);
         if (panel) {
           const prev = panel.style.border;
@@ -433,8 +466,12 @@
   function trySelectStandalone() {
     const analysis = analyzeShipOptions();
     if (analysis.standalone.length === 0) {
-      cartStatus = "no standalone option to switch to";
+      cartStatus = "no STANDALONE SHIP option on this sheet";
       return false;
+    }
+    if (analysis.selected?.isStandalone) {
+      cartStatus = "already on standalone";
+      return true;
     }
     // Pick the cheapest standalone, click its title (the -isClickable element).
     const target = [...analysis.standalone].sort((a, b) => a.priceNum - b.priceNum)[0];
@@ -1011,12 +1048,16 @@
       setText("scr-offers", "—");
       setText("scr-selopt", "—");
     } else {
-      setText("scr-offers", `${analysis.options.length} (${analysis.standalone.length} standalone / ${analysis.packs.length} pack)`);
+      setText(
+        "scr-offers",
+        `${analysis.options.length} (${analysis.standalone.length}sa / ${analysis.upgrades.length}up / ${analysis.packs.length}pk)`,
+      );
       const sel = analysis.selected;
-      const selLabel = sel ? `${sel.isPack ? "PACK" : "standalone"}: ${sel.subtitle || sel.title}` : "none";
+      const catTag = sel?.isPack ? "PACK" : sel?.isUpgrade ? "UPGRADE" : sel?.isStandalone ? "standalone" : "?";
+      const selLabel = sel ? `${catTag}: ${sel.subtitle || sel.title}` : "none";
       setText("scr-selopt", selLabel);
       const selEl = document.getElementById("scr-selopt");
-      if (selEl) selEl.style.color = sel?.isPack ? "#ff6b6b" : (sel ? "#6df2a9" : "");
+      if (selEl) selEl.style.color = sel?.isPack ? "#ff6b6b" : sel?.isUpgrade ? "#ffd166" : sel?.isStandalone ? "#6df2a9" : "";
     }
 
     if (!settings.lockStoreCredit) {
@@ -1032,8 +1073,9 @@
       setText("scr-lockSA", "disabled (off)");
     } else if (!analysis.hasOptions) {
       setText("scr-lockSA", "armed (no options visible)");
-    } else if (analysis.selected?.isPack) {
-      setText("scr-lockSA", "ARMED: blocks Add-to-Cart (pack selected)");
+    } else if (!analysis.selected?.isStandalone) {
+      const reason = analysis.selected?.isPack ? "pack" : analysis.selected?.isUpgrade ? "upgrade" : "none";
+      setText("scr-lockSA", `ARMED: blocks Add-to-Cart (${reason} selected)`);
       const e = document.getElementById("scr-lockSA"); if (e) e.style.color = "#ff6b6b";
     } else {
       setText("scr-lockSA", "OK: standalone selected");

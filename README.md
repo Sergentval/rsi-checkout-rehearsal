@@ -208,15 +208,18 @@ default (everything on except the three lock/hotkey toggles).
 On any ship-selection bottom sheet (RSI's `.c-optionsItemShip` cards),
 the script automatically:
 
-- **Outlines each option**: green for standalone ships, red for packs /
-  bundles, with a `⚠ PACK / BUNDLE` corner badge on the red ones.
-- **Detects pack** if the option's body lists more than one ship
-  (e.g. "188 Ships"), the subtitle contains a pack keyword
-  (`Pack`, `Bundle`, `Collection`, `Legatus`, `Anniversary`, `Praetorian`,
-  `Completionist`), or the price exceeds €2000.
-- **Reports in the panel**: `Offers: 2 (0 standalone / 2 pack)`,
-  `Selected: PACK: Legatus 2953` (red) or `Selected: standalone: 890 Jump`
-  (green).
+- **Outlines each option**: green for `STANDALONE SHIP`, amber for
+  `UPGRADE` (with badge `ℹ UPGRADE (requires source ship)`), red for
+  `PACKAGE` (with badge `⚠ PACK / BUNDLE`).
+- **Categorises via RSI's own title field** first — verified against the
+  live store, each `.c-optionsItemShip__title` reads exactly
+  `STANDALONE SHIP`, `UPGRADE`, or `PACKAGE`. Falls back to a keyword /
+  ship-count / price heuristic only for unrecognised titles (sale-specific
+  labels, legacy CCUs).
+- **Reports in the panel**: `Offers: 3 (1sa / 1up / 1pk)`,
+  `Selected: standalone: Aurora Mk II` (green) /
+  `Selected: PACK: Citizen Starter Pack` (red) /
+  `Selected: UPGRADE: ...` (amber).
 
 New hotkeys:
 
