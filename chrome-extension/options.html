@@ -28,6 +28,49 @@
       </section>
 
       <section class="card">
+        <h2>Scout</h2>
+        <p class="card-desc">Background watcher that polls each selected ship's pledge URL on a schedule and fires a desktop notification when a sold-out ship becomes available again. Polling runs in the extension's service worker — works while your browser is open.</p>
+
+        <div class="scout-toggles">
+          <label class="toggle inline">
+            <input type="checkbox" id="t-scoutEnabled">
+            <span class="label"><span class="name">Enable scout polling</span></span>
+          </label>
+          <label class="toggle inline">
+            <input type="checkbox" id="t-keepAliveEnabled">
+            <span class="label">
+              <span class="name">Keep cart / checkout tabs alive</span>
+              <span class="hint">Marks /cart and /checkout tabs as non-discardable so Chrome doesn't unload them. Default on.</span>
+            </span>
+          </label>
+          <div class="scout-interval">
+            <label for="scoutIntervalMin">Poll every</label>
+            <select id="scoutIntervalMin">
+              <option value="0.5">30 seconds</option>
+              <option value="1">1 minute</option>
+              <option value="2">2 minutes</option>
+              <option value="5">5 minutes</option>
+            </select>
+            <span class="hint inline-hint">Chrome enforces a minimum of 30 s for service-worker alarms.</span>
+          </div>
+        </div>
+
+        <div class="scout-add">
+          <input type="search" id="scout-search" placeholder="Type a ship name to add to the scout list…" autocomplete="off" />
+          <div class="scout-meta">
+            <span id="scout-search-meta">ship-matrix loading…</span>
+            <a id="scout-refresh">refresh</a>
+          </div>
+          <div id="scout-search-results" class="scout-search-results"></div>
+        </div>
+
+        <h3 class="sub-h">Currently scouting</h3>
+        <div id="scout-list" class="scout-list">
+          <div class="scout-empty">No ships in the scout list. Search above and click <kbd>+</kbd> to add.</div>
+        </div>
+      </section>
+
+      <section class="card">
         <h2>Reset</h2>
         <p class="card-desc">Reset everything — toggles, hotkeys, bookmarks — to first-install defaults.</p>
         <div class="actions">

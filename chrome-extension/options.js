@@ -223,6 +223,231 @@
     toast("hotkeys reset to defaults");
   });
 
+  // -------- Scout ----------------------------------------------------
+  // Storage shape mirrors background.js.
+  const SCOUT_DEFAULTS = {
+    scoutShips: [],
+    scoutEnabled: true,
+    scoutIntervalMin: 0.5,
+    keepAliveEnabled: true,
+  };
+
+  const MATRIX_CACHE_KEY = "shipMatrixCache";
+  const MATRIX_TTL_MS = 60 * 60 * 1000;
+
+  let scoutShipsCache = []; // ship-matrix listing
+
+  async function loadMatrix(force = false) {
+    if (!force) {
+      const cached = await chrome.storage.local.get(MATRIX_CACHE_KEY);
+      const e = cached[MATRIX_CACHE_KEY];
+      if (e && Date.now() - e.ts < MATRIX_TTL_MS) return e.data;
+    }
+    const res = await fetch("https://robertsspaceindustries.com/ship-matrix/index", {
+      method: "POST",
+      headers: { "x-requested-with": "XMLHttpRequest", accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`ship-matrix HTTP ${res.status}`);
+    const json = await res.json();
+    if (json.success !== 1) throw new Error("unexpected ship-matrix shape");
+    const data = json.data.map((s) => ({
+      id: s.id,
+      name: s.name ?? `ship #${s.id}`,
+      manufacturer: s.manufacturer?.name ?? "",
+      url: typeof s.url === "string" && s.url.startsWith("/")
+        ? `https://robertsspaceindustries.com${s.url}`
+        : null,
+    }));
+    await chrome.storage.local.set({ [MATRIX_CACHE_KEY]: { ts: Date.now(), data } });
+    return data;
+  }
+
+  async function getScoutShips() {
+    const stored = await chrome.storage.local.get({ scoutShips: [] });
+    return Array.isArray(stored.scoutShips) ? stored.scoutShips : [];
+  }
+  async function setScoutShips(list) {
+    await chrome.storage.local.set({ scoutShips: list });
+  }
+
+  function fmtAge(ts) {
+    if (!ts) return "never";
+    const ageSec = Math.round((Date.now() - ts) / 1000);
+    if (ageSec < 60) return `${ageSec}s ago`;
+    const ageMin = Math.round(ageSec / 60);
+    if (ageMin < 60) return `${ageMin}m ago`;
+    const ageHour = Math.round(ageMin / 60);
+    return `${ageHour}h ago`;
+  }
+
+  async function renderScoutList() {
+    const root = document.getElementById("scout-list");
+    while (root.firstChild) root.removeChild(root.firstChild);
+    const ships = await getScoutShips();
+    if (ships.length === 0) {
+      const e = document.createElement("div");
+      e.className = "scout-empty";
+      e.textContent = "No ships in the scout list. Search above and click + to add.";
+      root.appendChild(e);
+      return;
+    }
+    for (const s of ships) {
+      const row = document.createElement("div");
+      row.className = "scout-row";
+
+      const dot = document.createElement("span");
+      dot.className = "status-dot";
+      if (s.lastError) dot.classList.add("warn");
+      else if (s.lastAvailable === true) dot.classList.add("ok");
+      else if (s.lastAvailable === false) dot.classList.add("bad");
+      row.title = s.lastError ? `Last error: ${s.lastError}` : `Last available: ${s.lastAvailable}`;
+      row.appendChild(dot);
+
+      const meta = document.createElement("div");
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = s.name || "(unknown ship)";
+      const sub = document.createElement("span");
+      sub.className = "sub";
+      sub.textContent = s.url.replace(/^https?:\/\/[^/]+/, "");
+      meta.appendChild(name);
+      meta.appendChild(sub);
+      row.appendChild(meta);
+
+      const lastCheck = document.createElement("span");
+      lastCheck.className = "last-check";
+      const statusTxt =
+        s.lastError ? "error" :
+        s.lastAvailable === true  ? "available" :
+        s.lastAvailable === false ? "sold out"  : "unknown";
+      lastCheck.textContent = `${statusTxt} · ${fmtAge(s.lastChecked)}`;
+      row.appendChild(lastCheck);
+
+      const rm = document.createElement("button");
+      rm.className = "remove";
+      rm.textContent = "×";
+      rm.title = "Remove from scout list";
+      rm.addEventListener("click", async () => {
+        const cur = await getScoutShips();
+        await setScoutShips(cur.filter((x) => x.url !== s.url));
+        renderScoutList();
+        toast(`removed ${s.name}`);
+      });
+      row.appendChild(rm);
+
+      root.appendChild(row);
+    }
+  }
+
+  async function renderScoutSearch(query) {
+    const root = document.getElementById("scout-search-results");
+    const meta = document.getElementById("scout-search-meta");
+    while (root.firstChild) root.removeChild(root.firstChild);
+    const q = (query || "").trim().toLowerCase();
+    if (!q) {
+      meta.textContent = `${scoutShipsCache.length} ships loaded · type to filter`;
+      return;
+    }
+    const matches = scoutShipsCache.filter((s) =>
+      s.name.toLowerCase().includes(q) || s.manufacturer.toLowerCase().includes(q),
+    ).slice(0, 20);
+    meta.textContent = `${matches.length} match${matches.length === 1 ? "" : "es"}`;
+    const scouted = new Set((await getScoutShips()).map((x) => x.url));
+    for (const s of matches) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const name = document.createElement("span");
+      name.className = "name";
+      name.textContent = s.name;
+      const mfr = document.createElement("span");
+      mfr.className = "mfr";
+      mfr.textContent = s.manufacturer || "—";
+      meta.appendChild(name);
+      meta.appendChild(mfr);
+      const addBtn = document.createElement("button");
+      addBtn.className = "add-btn";
+      const already = s.url && scouted.has(s.url);
+      addBtn.textContent = already ? "✓" : "+";
+      if (already) addBtn.classList.add("added");
+      addBtn.disabled = !s.url || already;
+      addBtn.title = !s.url ? "no canonical URL — can't scout"
+                    : already  ? "already in scout list"
+                    : "Add to scout list";
+      addBtn.addEventListener("click", async () => {
+        if (!s.url || already) return;
+        const cur = await getScoutShips();
+        cur.push({
+          id: s.id, name: s.name, url: s.url,
+          addedAt: Date.now(), lastChecked: 0,
+          lastAvailable: null, lastTransitionAt: null, lastError: null,
+        });
+        await setScoutShips(cur);
+        renderScoutList();
+        renderScoutSearch(document.getElementById("scout-search").value);
+        toast(`scouting ${s.name}`);
+      });
+      row.appendChild(meta);
+      row.appendChild(addBtn);
+      root.appendChild(row);
+    }
+  }
+
+  async function loadScoutBehaviour() {
+    const stored = await chrome.storage.local.get(SCOUT_DEFAULTS);
+    const en = document.getElementById("t-scoutEnabled");
+    const ka = document.getElementById("t-keepAliveEnabled");
+    const iv = document.getElementById("scoutIntervalMin");
+    if (en) en.checked = !!stored.scoutEnabled;
+    if (ka) ka.checked = !!stored.keepAliveEnabled;
+    if (iv) iv.value = String(stored.scoutIntervalMin);
+
+    en?.addEventListener("change", async () => {
+      await chrome.storage.local.set({ scoutEnabled: en.checked });
+      toast(`scout ${en.checked ? "enabled" : "paused"}`);
+    });
+    ka?.addEventListener("change", async () => {
+      await chrome.storage.local.set({ keepAliveEnabled: ka.checked });
+      toast(`keep-alive ${ka.checked ? "on" : "off"}`);
+    });
+    iv?.addEventListener("change", async () => {
+      await chrome.storage.local.set({ scoutIntervalMin: Number(iv.value) });
+      toast(`poll interval: ${iv.options[iv.selectedIndex].textContent}`);
+    });
+  }
+
+  async function initScout() {
+    await loadScoutBehaviour();
+    try {
+      scoutShipsCache = await loadMatrix();
+      document.getElementById("scout-search-meta").textContent =
+        `${scoutShipsCache.length} ships loaded · type to filter`;
+    } catch (err) {
+      document.getElementById("scout-search-meta").textContent = `error: ${err.message}`;
+    }
+    document.getElementById("scout-search").addEventListener("input", (e) => {
+      renderScoutSearch(e.target.value);
+    });
+    document.getElementById("scout-refresh").addEventListener("click", async (e) => {
+      e.preventDefault();
+      try {
+        scoutShipsCache = await loadMatrix(true);
+        renderScoutSearch(document.getElementById("scout-search").value);
+        toast("ship-matrix refreshed");
+      } catch (err) {
+        toast(`refresh failed: ${err.message}`);
+      }
+    });
+    renderScoutList();
+    // Re-render the list when the background service worker updates statuses.
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "local" && "scoutShips" in changes) renderScoutList();
+    });
+  }
+
+  initScout();
+
   document.getElementById("reset-all").addEventListener("click", async () => {
     if (!confirm("Reset all toggles, hotkeys, and bookmarks to defaults?")) return;
     // Wipe + restore defaults for the three managed keys; leave caches intact.

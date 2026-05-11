@@ -184,6 +184,45 @@ payment pages, **R** force refresh, **Esc** hide / show the overlay.
 All hotkeys (except `Esc`) are rebindable in the settings page —
 click the toolbar icon → **Open settings page →**.
 
+### Scout — browser-side ship-availability watcher
+
+The extension's MV3 service worker (`background.js`) polls a user-selected
+list of ships on a schedule and fires a desktop notification when a
+sold-out ship becomes available again. Set up in the options page →
+**Scout** card:
+
+- **Enable scout polling** — master on/off.
+- **Keep cart / checkout tabs alive** — marks `/cart` and `/checkout` tabs
+  as `autoDiscardable=false` so Chrome doesn't unload them mid-purchase.
+  Default on.
+- **Poll every** — interval (30 s default; Chrome enforces a 30 s floor).
+- **Search box** — type a ship name (matches the live ship-matrix), click
+  `+` to add to the scout list.
+- **Currently scouting** — per-row status dot (green = available, red =
+  sold out, amber = error, grey = first observation), last-check age,
+  `×` to remove.
+
+State transitions trigger `chrome.notifications`:
+
+| Was       | Is         | Action                                              |
+| --------- | ---------- | --------------------------------------------------- |
+| sold out  | available  | **Notification fires** (`<Ship> is BACK IN STOCK`, click to open) |
+| available | sold out   | Silent — only the status dot changes                |
+| error     | any        | Silent — error text shown in row tooltip            |
+| first run | any        | Silent — just learn baseline                        |
+
+Availability is detected by fetching the pledge URL (GET, no credentials)
+and looking for positive signals (`VIEW OFFERS` or `Add to cart` text)
+vs negative signals (`Sold out`, `Coming soon`, `Currently unavailable`).
+Ambiguous responses don't flip state — false positives are worse than a
+delayed alert.
+
+**Browser-side vs daemon-side**: this is the in-browser equivalent of
+the daemon's `PROBE_URLS` (in `.env`). Daemon runs 24/7 on your VPS and
+pushes Discord/ntfy; extension scout runs while your browser is open
+and fires desktop notifications. Use both for redundancy on the ships
+you really care about.
+
 ### Settings page
 
 The settings page (`options.html`) is a full-tab UI for toggles, hotkey

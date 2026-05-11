@@ -22,7 +22,10 @@
     "page": "options.html",
     "open_in_tab": true
   },
-  "permissions": ["activeTab", "storage"],
+  "permissions": ["activeTab", "storage", "alarms", "notifications", "tabs"],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "https://robertsspaceindustries.com/*",
     "https://*.robertsspaceindustries.com/*"
