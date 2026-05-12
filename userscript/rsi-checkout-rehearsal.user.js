@@ -124,7 +124,7 @@
   // characters; events compared via e.key.toLowerCase(). Escape stays
   // fixed as the "hide / show" key (not user-rebindable).
   const HOTKEY_DEFAULTS = {
-    focus: "f", max: "m", next: "n",
+    max: "m", next: "n",
     add: "a", standalone: "s", cart: "c",
     view: "v", back: "b",
     refresh: "r",
@@ -1453,7 +1453,6 @@
     while (root.firstChild) root.removeChild(root.firstChild);
     // Order follows the typical user flow: discover → buy → checkout → pay.
     const order = [
-      ["focus",      "focus"],
       ["view",       "view"],
       ["standalone", "standalone"],
       ["add",        "add"],
@@ -1517,7 +1516,6 @@
     const existing = document.getElementById(PANEL_ID);
     if (!settings.showPanel) {
       if (existing) existing.style.display = "none";
-      state.buttons = buttons;
       return;
     }
     if (existing) existing.style.display = "";
@@ -1707,19 +1705,6 @@
       else { const b = document.getElementById(BANNER_ID); if (b) b.remove(); }
     }
 
-    state.buttons = buttons;
-  }
-
-  const state = { buttons: [], focusIdx: 0 };
-
-  function focusNext() {
-    if (state.buttons.length === 0) return;
-    state.focusIdx = (state.focusIdx + 1) % state.buttons.length;
-    const target = state.buttons[state.focusIdx]?.el;
-    if (target) {
-      target.scrollIntoView({ behavior: "smooth", block: "center" });
-      target.focus();
-    }
   }
 
   // Wrap a hotkey action so we record actionLatencyMs (keydown → done).
@@ -1734,8 +1719,7 @@
   document.addEventListener("keydown", (e) => {
     if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
     const k = (e.key || "").toLowerCase();
-    if (k === hotkeys.focus)           { runHotkey("focus",      focusNext, false); e.preventDefault(); }
-    else if (k === hotkeys.max)        { runHotkey("max",        tryClickMaxCredit); e.preventDefault(); }
+    if (k === hotkeys.max)             { runHotkey("max",        tryClickMaxCredit); e.preventDefault(); }
     else if (k === hotkeys.next)       { runHotkey("next",       tryClickFlow); e.preventDefault(); }
     else if (k === hotkeys.add)        { runHotkey("add",        tryClickAddToCart); e.preventDefault(); }
     else if (k === hotkeys.cart)       { runHotkey("cart",       tryGoToCart, false); e.preventDefault(); }

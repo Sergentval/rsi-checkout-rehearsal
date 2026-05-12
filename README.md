@@ -179,8 +179,9 @@ you're using a managed Chrome where extension loading is restricted.
 | Max button     | did we find and click RSI's "apply max credit" button on a payment page?      |
 | Latency        | round-trip time of one HEAD request to RSI per refresh                        |
 
-Hotkeys: **F** focus next buy button, **M** click Max-credit button on
-payment pages, **R** force refresh, **Esc** hide / show the overlay.
+Hotkeys: **V** view offers, **S** select standalone, **A** add to cart,
+**C** go to cart, **M** click Max credit, **N** click Continue / Place
+Order, **B** back, **R** force refresh, **Esc** hide / show the overlay.
 All hotkeys (except `Esc`) are rebindable in the settings page —
 click the toolbar icon → **Open settings page →**.
 

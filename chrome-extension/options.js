@@ -28,7 +28,6 @@
   };
 
   const HOTKEY_DEFAULTS = {
-    focus:      "f",
     view:       "v",
     standalone: "s",
     add:        "a",
@@ -40,7 +39,6 @@
   };
 
   const HOTKEY_META = {
-    focus:      { name: "Focus next buy button",           sub: "Scrolls to and focuses the next visible Add-to-Cart / Checkout button." },
     view:       { name: "Click View Offers",               sub: "Clicks the ship page's “VIEW OFFERS” button to open the offer bottom sheet." },
     standalone: { name: "Select STANDALONE SHIP option",   sub: "Switches the bottom-sheet selection to the cheapest STANDALONE SHIP." },
     add:        { name: "Click Add-to-Cart",               sub: "Clicks the bottom-sheet's Add-to-Cart. Gated by Lock to standalone." },
