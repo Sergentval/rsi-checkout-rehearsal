@@ -209,14 +209,49 @@
   // initial "Add to Cart"). The [N] hotkey targets this set. Exists as its
   // own list so the hotkey doesn't accidentally Add-to-Cart while you're
   // browsing a pledge page.
+  //
+  // Use \b (word boundary) instead of \s*$ so phrases like "Continue to
+  // payment" or "PLACE ORDER NOW" still match. Includes French because
+  // RSI auto-translates based on locale (Spectrum / pledge / checkout
+  // can all render in fr / de / es).
   const FLOW_PATTERNS = [
-    /^\s*continue\s*$/i,
-    /^\s*next\s*$/i,
-    /^\s*proceed( to checkout)?\s*$/i,
-    /^\s*checkout\s*$/i,
-    /^\s*place order\s*$/i,
-    /^\s*confirm( order)?\s*$/i,
-    /^\s*pay( now)?\s*$/i,
+    // English
+    /^\s*continue\b/i,
+    /^\s*next\b/i,
+    /^\s*proceed\b/i,           // covers "Proceed", "Proceed to checkout"
+    /^\s*checkout\b/i,
+    /^\s*place\s+order\b/i,
+    /^\s*confirm\b/i,
+    /^\s*pay\b/i,
+    /^\s*submit\b/i,
+    /^\s*validate\b/i,
+    /^\s*complete\s+(order|purchase|checkout)\b/i,
+    /^\s*review\s+order\b/i,
+    // Detection of payment-commit-shaped buttons in non-English locales.
+    // French (most common on RSI for European players).
+    /^\s*valider\b/i,           // validate
+    /^\s*continuer\b/i,         // continue
+    /^\s*suivant\b/i,           // next
+    /^\s*confirmer\b/i,         // confirm
+    /^\s*payer\b/i,             // pay
+    /^\s*finaliser\b/i,         // finalize / complete
+    /^\s*passer\s+(?:la|au)\s+(?:commande|paiement)\b/i, // "place order"/"go to payment"
+  ];
+
+  // Subset that means "this click commits a purchase" — used to gate the
+  // lockStoreCredit logic. Includes the same locale expansions.
+  const COMMIT_PATTERNS = [
+    /^\s*place\s+order\b/i,
+    /^\s*confirm\b/i,
+    /^\s*pay\b/i,
+    /^\s*submit\b/i,
+    /^\s*validate\b/i,
+    /^\s*complete\s+(order|purchase|checkout)\b/i,
+    /^\s*valider\b/i,
+    /^\s*confirmer\b/i,
+    /^\s*payer\b/i,
+    /^\s*finaliser\b/i,
+    /^\s*passer\s+la\s+commande\b/i,
   ];
 
   const PAYMENT_URL_HINTS = [/\/payment/i, /\/checkout\/payment/i, /\/confirm/i];
@@ -805,6 +840,19 @@
   // [N] hotkey when enableFlowHotkey is on. Picks the largest visible button
   // matching FLOW_PATTERNS — primary CTAs are typically the largest button
   // by area on RSI's checkout pages.
+  //
+  // RSI wraps button text inside <span data-cy-id="button__text">, so we
+  // prefer that selector; fall back to innerText / value / aria-label.
+  function getButtonLabel(el) {
+    return (
+      el.querySelector?.('[data-cy-id="button__text"]')?.innerText ||
+      el.innerText ||
+      el.value ||
+      el.getAttribute("aria-label") ||
+      ""
+    ).trim();
+  }
+
   function findFlowButton() {
     let best = null;
     let bestArea = 0;
@@ -813,7 +861,7 @@
     );
     for (const el of cands) {
       if (el.disabled) continue;
-      const txt = (el.innerText || el.value || el.getAttribute("aria-label") || "").trim();
+      const txt = getButtonLabel(el);
       if (!txt) continue;
       if (!FLOW_PATTERNS.some((p) => p.test(txt))) continue;
       const rect = el.getBoundingClientRect();
@@ -851,17 +899,42 @@
   function tryClickFlow() {
     if (!settings.enableFlowHotkey) {
       flowStatus = "hotkey disabled (toggle in popup)";
+      console.debug("[scr] N pressed but `enableFlowHotkey` is off");
       return false;
     }
     const btn = findFlowButton();
-    if (!btn) { flowStatus = "no Continue/Place-Order button on page"; return false; }
-    const label = (btn.innerText || btn.value || btn.getAttribute("aria-label") || "").trim().slice(0, 40);
+    if (!btn) {
+      // Diagnostic: list the most prominent visible buttons so the user
+      // can tell us which one should have matched.
+      const visible = [...document.querySelectorAll('button, a[role="button"], input[type="button"], input[type="submit"]')]
+        .filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.width > 0 && r.height > 0 && !el.disabled;
+        })
+        .map((el) => ({
+          el,
+          area: el.getBoundingClientRect().width * el.getBoundingClientRect().height,
+          text: (el.querySelector?.('[data-cy-id="button__text"]')?.innerText
+                 || el.innerText || el.value || el.getAttribute("aria-label") || "").trim(),
+        }))
+        .filter((c) => c.text)
+        .sort((a, b) => b.area - a.area)
+        .slice(0, 3)
+        .map((c) => c.text.slice(0, 30));
+      flowStatus = visible.length > 0
+        ? `no match · top buttons: "${visible.join('", "')}"`
+        : "no buttons visible on page";
+      console.debug("[scr] N pressed but no FLOW_PATTERNS match. Visible top buttons:", visible);
+      return false;
+    }
+    const label = (btn.querySelector?.('[data-cy-id="button__text"]')?.innerText
+                   || btn.innerText || btn.value || btn.getAttribute("aria-label") || "").trim();
 
-    // Store-credit lock: when on, refuse to click any "place order / pay /
-    // confirm" button until isStoreCreditApplied() returns true. Continue /
-    // Next / Checkout / Proceed are unaffected — the lock only fires on the
-    // final commit click.
-    const isCommit = /^\s*(place order|confirm( order)?|pay( now)?)\s*$/i.test(label);
+    // Store-credit lock: when on, refuse to click any payment-commit button
+    // until isStoreCreditApplied() returns true. Non-commit clicks (Continue,
+    // Next, Checkout, Proceed) are unaffected — the lock only fires on the
+    // final commit step.
+    const isCommit = COMMIT_PATTERNS.some((re) => re.test(label));
     if (settings.lockStoreCredit && isCommit) {
       lastCreditApplied = isStoreCreditApplied();
       if (!lastCreditApplied) {
