@@ -1130,6 +1130,35 @@
   //   3. Page text shows "store credit applied" with a non-zero dollar amount.
   // The text-pattern signal is the most robust against the framework re-creating
   // button DOM nodes (which would clear our WeakSets but leave the apply in place).
+  // Match a price display showing exactly zero in any common currency format.
+  // Accepts: "$0.00", "€0.00", "0,00 €", "0 €", "0.00 USD", "€ 0", "0,00€".
+  // Rejects any string containing a non-zero digit (so "$10.00" / "€1,234.00"
+  // don't slip through).
+  const ZERO_PRICE_RE = /^[\s$€£¥]*0(?:[.,]0{1,2})?[\s$€£¥]*(?:usd|eur|gbp|cad|aud)?\s*$/i;
+
+  // Find a `data-cy-id="price_unit__value"` element whose displayed amount is
+  // zero AND whose nearby label context says it's the total / amount due.
+  // RSI uses the same component for every price (subtotal, tax line, item
+  // price), so the label check is what distinguishes "order total = 0" from
+  // an unrelated $0 line (e.g. a free upgrade fee).
+  function isOrderTotalZero() {
+    const priceEls = document.querySelectorAll('[data-cy-id="price_unit__value"]');
+    for (const el of priceEls) {
+      const txt = (el.innerText || el.textContent || "").trim();
+      if (!ZERO_PRICE_RE.test(txt)) continue;
+      // Walk up to ~5 ancestors looking for total/due/amount wording (EN+FR).
+      let parent = el.parentElement;
+      for (let i = 0; i < 5 && parent; i++) {
+        const ctx = (parent.innerText || "").toLowerCase();
+        if (/(?:order|grand)\s*total|amount\s+(?:due|to\s+pay|payable)|payment\s+total|\bdue\s+(?:today|now)\b|à\s+payer|montant\s+(?:dû|total)|total\s+(?:à\s+payer|de\s+la\s+commande|commande)/i.test(ctx)) {
+          return true;
+        }
+        parent = parent.parentElement;
+      }
+    }
+    return false;
+  }
+
   let lastCreditApplied = false;
   function isStoreCreditApplied() {
     // Signal 1+2: did the script or user touch credit on this page-load?
@@ -1141,12 +1170,14 @@
     if (/applied store[-\s]?credit[^$]{0,20}\$\s*[1-9]/i.test(txt)) return true;
     // FR auto-translated checkout: "crédit appliqué", "crédit boutique appliqué".
     if (/cr[éeè]dit[^a-z$€]{0,20}appliqu[ée]/i.test(txt)) return true;
-    // Order total reached zero — credit fully covered the cart.
-    if (/(?:order|grand)\s+total[^$]{0,12}\$\s*0(?:\.0{1,2})?\b/i.test(txt)) return true;
-    // Signal 4: order summary shows a negative store-credit line item
+    // Signal 4: order total reached zero — credit fully covered the cart.
+    //   Reads RSI's stable `data-cy-id="price_unit__value"` element rather
+    //   than free-text body scraping, so it works in any locale / currency.
+    if (isOrderTotalZero()) return true;
+    // Signal 5: order summary shows a negative store-credit line item
     //   "Store Credit  -$50.00"  /  "Crédit boutique  -50,00 €"
     if (/(?:store[-\s]?credit|cr[éeè]dit)[^$€\n]{0,30}[-−]\s*[$€]?\s*[1-9]/i.test(txt)) return true;
-    // Signal 5: the credit input is filled with a positive value AND has been
+    // Signal 6: the credit input is filled with a positive value AND has been
     //   locked (disabled / readonly) — RSI's typical post-apply state. We
     //   intentionally skip writable inputs here because a writable field with
     //   a value can also mean "user typed an amount but didn't click Apply".
