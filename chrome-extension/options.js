@@ -12,6 +12,7 @@
     enableFlowHotkey: false,
     lockStoreCredit: false,
     lockToStandalone: false,
+    autoAgreeDisclaimer: false,
   };
 
   // (key in storage) → { description, hint, danger? }
@@ -25,6 +26,7 @@
     enableFlowHotkey: { name: "[N] hotkey: click Continue / Place Order", hint: "Clicks the page's primary Continue/Place-Order button. Default off — this is the only setting that can complete a purchase.", danger: true },
     lockStoreCredit:  { name: "Lock to store credit",              hint: "[N] refuses to click Place Order if credit isn't detected as applied. Off by default." },
     lockToStandalone: { name: "Lock to standalone ship",           hint: "[A] refuses to click Add-to-Cart when a PACKAGE or UPGRADE is selected. Off by default — flip off to buy a pack intentionally." },
+    autoAgreeDisclaimer: { name: "Auto-tick TOS modal checkbox",   hint: "When the cart disclaimer modal pops up after Place Order, automatically ticks the 'I agree to TOS + Privacy' checkbox. The [T] hotkey works whether this is on or off — leave it off if you want to tick the box explicitly, turn it on for hands-free." },
   };
 
   const HOTKEY_DEFAULTS = {
@@ -33,6 +35,7 @@
     add:        "a",
     cart:       "c",
     max:        "m",
+    tos:        "t",
     next:       "n",
     back:       "b",
     refresh:    "r",
@@ -44,6 +47,7 @@
     add:        { name: "Click Add-to-Cart",               sub: "Clicks the bottom-sheet's Add-to-Cart. Gated by Lock to standalone." },
     cart:       { name: "Go to cart",                      sub: "Clicks the header cart link or navigates to /<locale>/pledge/cart." },
     max:        { name: "Click Max-credit button",         sub: "Clicks RSI's “Apply Max Credit” button on the payment page." },
+    tos:        { name: "Tick TOS disclaimer checkbox",    sub: "Ticks the “I agree to TOS + Privacy” checkbox inside the cart disclaimer modal. Form-fill only — you still press [N] inside the modal to commit." },
     next:       { name: "Click Continue / Place Order",    sub: "Clicks the page's primary Continue / Place-Order button. Gated by Lock to store credit." },
     back:       { name: "Go back (escape pack-only ship)", sub: "history.back() when possible; falls back to /<locale>/pledge/ships." },
     refresh:    { name: "Refresh overlay panel",           sub: "Forces a panel rebuild — useful after RSI rerenders the page." },

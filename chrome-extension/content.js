@@ -106,6 +106,7 @@
     enableFlowHotkey: false, // [N] hotkey clicks the page's primary "next" button
     lockStoreCredit: false,  // [N] refuses to click Place Order if credit not applied
     lockToStandalone: false, // [A] refuses Add-to-Cart when the selected option is a pack
+    autoAgreeDisclaimer: false, // Auto-tick TOS checkbox on modal appearance (alongside [T] hotkey)
   };
   const settings = { ...DEFAULT_SETTINGS };
 
@@ -116,6 +117,7 @@
     max: "m", next: "n",
     add: "a", standalone: "s", cart: "c",
     view: "v", back: "b",
+    tos: "t",
     refresh: "r",
   };
   const hotkeys = { ...HOTKEY_DEFAULTS };
@@ -607,6 +609,78 @@
       o.el.classList.toggle("scr-opt-upgrade", o.isUpgrade);
     }
   }
+
+  // ---------------- Cart disclaimer modal ------------------------------
+  // After "Place Order", RSI pops a modal (.cartDisclaimerModal) with the
+  // pledge / 30-day-refund / TOS text and an "I agree to TOS + Privacy"
+  // checkbox. The checkbox MUST be ticked before the modal's commit
+  // button enables. This auto-ticks it (form-fill category, same as
+  // store-credit autofill) when the toggle is on. The actual commit click
+  // (inside the modal) is still the user's job via [N].
+  const tickedDisclaimers = new WeakSet();
+  let disclaimerStatus = "—";
+
+  function findCartDisclaimerModal() {
+    return document.querySelector('.cartDisclaimerModal, [class*="cartDisclaimer"]')
+      || (() => {
+        // Generic fallback — any modal containing "I agree" + Terms wording.
+        for (const m of document.querySelectorAll('[class*="modal"], [role="dialog"]')) {
+          const txt = (m.innerText || "").toLowerCase();
+          if (/i agree/.test(txt) && /terms of service/.test(txt)) return m;
+        }
+        return null;
+      })();
+  }
+
+  function tryTickCartDisclaimer() {
+    const modal = findCartDisclaimerModal();
+    if (!modal) {
+      disclaimerStatus = "—";
+      return false;
+    }
+    // Find the agreement checkbox (RSI uses .a-checkbox__input).
+    const inputs = modal.querySelectorAll('input[type="checkbox"]');
+    let target = null;
+    for (const cb of inputs) {
+      if (cb.checked) continue;
+      target = cb;
+      break;
+    }
+    if (!target) {
+      disclaimerStatus = "already ticked";
+      return true;
+    }
+    if (tickedDisclaimers.has(target)) {
+      disclaimerStatus = "ticked";
+      return true;
+    }
+
+    // RSI's checkbox is a custom component — the visible click target is
+    // .a-checkboxDisplay.-interactive (or the wrapping <label>). Clicking
+    // the input directly doesn't always fire RSI's controlled-component
+    // handler.
+    const wrapper = target.closest('.a-checkbox') || target.closest("label") || target;
+    const display = wrapper.querySelector(".a-checkboxDisplay.-interactive")
+      || wrapper.querySelector("label")
+      || wrapper;
+    display.click();
+
+    // Some React setups need a native input event after the click.
+    if (!target.checked) {
+      target.checked = true;
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    tickedDisclaimers.add(target);
+    disclaimerStatus = "ticked: TOS";
+    // Visual flash on the wrapper.
+    const prev = wrapper.style.outline;
+    wrapper.style.outline = "3px solid #00e676";
+    setTimeout(() => { wrapper.style.outline = prev; }, 700);
+    return true;
+  }
+  // ----------------------------------------------------------------------
 
   // ---------------- Add-to-Cart + cart-nav helpers ----------------------
   function findAddToCartButton() {
@@ -1247,12 +1321,13 @@
 
     // ─── ACTIONS ─────────────────────────────────────────────────────
     const secStatus = mkSection("Actions");
-    secStatus.appendChild(mkRow("max",     "Max button"));
-    secStatus.appendChild(mkRow("prefill", "SC autofill"));
-    secStatus.appendChild(mkRow("flow",    "Flow"));
-    secStatus.appendChild(mkRow("cart",    "Cart action"));
-    secStatus.appendChild(mkRow("lock",    "SC lock"));
-    secStatus.appendChild(mkRow("lockSA",  "Standalone lock"));
+    secStatus.appendChild(mkRow("max",        "Max button"));
+    secStatus.appendChild(mkRow("prefill",    "SC autofill"));
+    secStatus.appendChild(mkRow("disclaimer", "TOS modal"));
+    secStatus.appendChild(mkRow("flow",       "Flow"));
+    secStatus.appendChild(mkRow("cart",       "Cart action"));
+    secStatus.appendChild(mkRow("lock",       "SC lock"));
+    secStatus.appendChild(mkRow("lockSA",     "Standalone lock"));
     p.appendChild(secStatus);
 
     // ─── WAVES (event schedule, hidden when no event configured) ────
@@ -1447,6 +1522,7 @@
       ["add",        "add"],
       ["cart",       "cart"],
       ["max",        "max"],
+      ["tos",        "tos"],
       ["next",       "next"],
       ["back",       "back"],
       ["refresh",    "refresh"],
@@ -1564,6 +1640,20 @@
     else if (/prefilled/i.test(prefillStatus))   setPill("scr-prefill", "prefilled", "ok");
     else if (/disabled/i.test(prefillStatus))    setPill("scr-prefill", "off", "muted");
     else                                         setPill("scr-prefill", prefillStatus.slice(0, 24), "muted");
+
+    // TOS / cart-disclaimer modal status
+    // Hotkey [T] always available; toggle controls auto-tick on modal appearance.
+    if (/ticked|already/.test(disclaimerStatus || "")) {
+      setPill("scr-disclaimer", "TOS ticked", "ok");
+    } else if (findCartDisclaimerModal()) {
+      // Modal is open but not ticked yet — prompt the user.
+      const tag = settings.autoAgreeDisclaimer ? "auto · pending" : `press ${hotkeys.tos.toUpperCase()} to tick`;
+      setPill("scr-disclaimer", tag, "warn");
+    } else if (disclaimerStatus && disclaimerStatus !== "—") {
+      setPill("scr-disclaimer", disclaimerStatus.slice(0, 22), "muted");
+    } else {
+      setPill("scr-disclaimer", "—", "muted");
+    }
 
     // Flow ([N])
     if (!settings.enableFlowHotkey) setPill("scr-flow", "off", "muted");
@@ -1715,6 +1805,7 @@
     else if (k === hotkeys.standalone) { runHotkey("standalone", trySelectStandalone); e.preventDefault(); }
     else if (k === hotkeys.view)       { runHotkey("view",       tryClickViewOffers); e.preventDefault(); }
     else if (k === hotkeys.back)       { runHotkey("back",       goBack, false); e.preventDefault(); }
+    else if (k === hotkeys.tos)        { runHotkey("tos",        tryTickCartDisclaimer); e.preventDefault(); }
     else if (k === hotkeys.refresh)    { runHotkey("refresh",    () => {}); }
     else if (e.key === "Escape") {
       const p = document.getElementById(PANEL_ID);
@@ -1739,6 +1830,9 @@
       if (!isRelevantPage()) return;
       const isPaymentPage = PAYMENT_URL_HINTS.some((p) => p.test(location.pathname));
       if (isPaymentPage && settings.autoClickMax) tryClickMaxCredit();
+      // Auto-tick TOS modal the moment it appears (toggle off by default).
+      // The [T] hotkey works independently — auto fires only if toggle is on.
+      if (settings.autoAgreeDisclaimer) tryTickCartDisclaimer();
     });
   }
 

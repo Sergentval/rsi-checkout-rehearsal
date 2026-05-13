@@ -11,6 +11,7 @@
     enableFlowHotkey: false,
     lockStoreCredit: false,
     lockToStandalone: false,
+    autoAgreeDisclaimer: false,
   };
 
   const setText = (id, v) => {
