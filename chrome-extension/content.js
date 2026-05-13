@@ -680,21 +680,53 @@
       })();
   }
 
-  // Detect whether a RSI display-wrapper checkbox is in the checked state.
-  // The state is communicated by either:
-  //   - a `-checked` class on the wrapper, OR
-  //   - aria-checked="true", OR
-  //   - the visible icon's class (rare — usually wrapper-driven via CSS).
-  // The wrapper always contains both .-checked and .-indeterminate icon
-  // spans; only one is rendered based on state — so the icon classes alone
-  // don't tell us anything.
+  // Detect whether an RSI display-wrapper checkbox is currently in the
+  // "checked" state. State signals seen in RSI's Orion markup:
+  //   - `-checked` class somewhere on the wrapper or its parent label
+  //   - `on` class on the parent <label class="a-checkbox__inside on">
+  //     (current RSI 2026-05 markup — the most reliable signal)
+  //   - aria-checked="true" on the wrapper itself
+  // The icon spans BOTH always exist in the DOM (one `-checked`, one
+  // `-indeterminate`); only one is rendered via CSS, so icon classes alone
+  // tell us nothing about state.
   function isCheckboxDisplayChecked(d) {
     if (!d) return false;
     if (d.classList.contains("-checked")) return true;
     if (d.getAttribute("aria-checked") === "true") return true;
-    // Some variants put the state on the parent <label> / outer wrapper.
     const parent = d.parentElement;
-    if (parent && parent.classList?.contains("-checked")) return true;
+    if (!parent) return false;
+    if (parent.classList?.contains("-checked")) return true;
+    if (parent.classList?.contains("on")) return true; // <label class="a-checkbox__inside on">
+    return false;
+  }
+
+  // Pure-div checkbox fallback: when RSI's modal has no native <input>
+  // (rare — every variant we've seen so far keeps the input around), click
+  // the display wrapper directly and cascade through pointer events.
+  function tryClickDisplayWrapperOnly(wrapper) {
+    if (!wrapper) return false;
+    if (tickedDisclaimers.has(wrapper)) {
+      disclaimerStatus = "ticked";
+      return true;
+    }
+    wrapper.click();
+    if (!isCheckboxDisplayChecked(wrapper)) {
+      const opts = { bubbles: true, cancelable: true, composed: true };
+      try { wrapper.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch {}
+      try { wrapper.dispatchEvent(new MouseEvent("mousedown", opts)); } catch {}
+      try { wrapper.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
+      try { wrapper.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
+      try { wrapper.dispatchEvent(new MouseEvent("click", opts)); } catch {}
+    }
+    if (isCheckboxDisplayChecked(wrapper)) {
+      tickedDisclaimers.add(wrapper);
+      disclaimerStatus = "ticked: TOS";
+      const prev = wrapper.style.outline;
+      wrapper.style.outline = "3px solid #00e676";
+      setTimeout(() => { wrapper.style.outline = prev; }, 700);
+      return true;
+    }
+    disclaimerStatus = "click did not register";
     return false;
   }
 
@@ -705,30 +737,40 @@
       return false;
     }
 
-    // Two markup variants RSI has shipped:
-    //   LEGACY  — native <input type="checkbox"> inside .a-checkbox wrapper.
-    //   CURRENT — pure-div component, no native input:
-    //     <div class="a-checkboxDisplay a-checkbox__wrapper -interactive"
-    //          data-cy-id="checkbox__display">
-    //       <span class="a-checkboxDisplay__icon -checked …"><svg/></span>
-    //       <span class="a-checkboxDisplay__icon -indeterminate …"><svg/></span>
-    //     </div>
-    //   The checked state is on the wrapper itself (class `-checked` or
-    //   aria-checked). Both icon spans always exist; only one is rendered.
+    // RSI's TOS modal (2026-05): native <input type="checkbox"> still
+    // present inside <label for="...">, but the visual chrome is a custom
+    // div component. The most reliable way to tick it is to click the input
+    // itself — that fires a real click + change event sequence which
+    // React's onChange handler responds to and updates aria-checked and the
+    // `on` class on the parent label.
+    //
+    // Cascade of fallbacks if the input click doesn't take:
+    //   1. Click the <label> (browser's label-input semantics).
+    //   2. Click the display wrapper (.a-checkboxDisplay.-interactive).
+    //   3. Dispatch a full pointer sequence on the display wrapper.
+    //   4. Force input.checked + emit input/change events.
+    //
+    // Crucially we only add to tickedDisclaimers AFTER verifying the click
+    // actually flipped the state, so the MutationObserver-driven
+    // scheduleFastPath() can retry on the next tick if React swallowed our
+    // click. The prior version marked it ticked unconditionally and the
+    // retry path never fired.
 
-    // 1) Legacy native-input path
-    const nativeInputs = [...modal.querySelectorAll('input[type="checkbox"]')];
-    const nativeUnchecked = nativeInputs.find((cb) => !cb.checked);
+    const inputs = [...modal.querySelectorAll('input[type="checkbox"]')];
+    const target = inputs.find((cb) => !cb.checked);
 
-    // 2) Current display-wrapper path
-    const displays = [...modal.querySelectorAll(
-      '.a-checkboxDisplay.-interactive, [data-cy-id="checkbox__display"]',
-    )];
-    const displayUnchecked = displays.find((d) => !isCheckboxDisplayChecked(d));
-
-    if (!nativeUnchecked && !displayUnchecked) {
-      // Either no checkbox at all, or all already ticked.
-      if (nativeInputs.length > 0 || displays.length > 0) {
+    if (!target) {
+      if (inputs.length > 0) {
+        disclaimerStatus = "already ticked";
+        return true;
+      }
+      // No native input — fall back to the pure-div path.
+      const wrappers = [...modal.querySelectorAll(
+        '[data-cy-id="checkbox__display"], .a-checkboxDisplay.-interactive',
+      )];
+      const unchecked = wrappers.find((w) => !isCheckboxDisplayChecked(w));
+      if (unchecked) return tryClickDisplayWrapperOnly(unchecked);
+      if (wrappers.length > 0) {
         disclaimerStatus = "already ticked";
         return true;
       }
@@ -736,57 +778,63 @@
       return false;
     }
 
-    // Choose the most reliable target. Prefer the native input when present
-    // so React/Vue controlled state stays in sync; otherwise click the
-    // visible display wrapper directly.
-    let target;
-    let clickTarget;
-    if (nativeUnchecked) {
-      target = nativeUnchecked;
-      const wrapper = target.closest('.a-checkbox, .a-checkbox__wrapper, label')
-        || target.parentElement || target;
-      clickTarget = wrapper.querySelector('.a-checkboxDisplay.-interactive, [data-cy-id="checkbox__display"]')
-        || wrapper.querySelector("label")
-        || wrapper;
-    } else {
-      target = displayUnchecked;
-      clickTarget = displayUnchecked;
-    }
-
     if (tickedDisclaimers.has(target)) {
       disclaimerStatus = "ticked";
       return true;
     }
 
-    clickTarget.click();
+    // Cascade. Stop as soon as target.checked flips.
+    target.click();
 
-    // Native-input fallback: some forms don't pick up wrapper clicks. Force
-    // the underlying input state + emit input/change events.
-    if (target.tagName === "INPUT" && !target.checked) {
+    if (!target.checked) {
+      const label = target.closest("label");
+      if (label && label !== target) label.click();
+    }
+
+    let displayWrapper = null;
+    if (!target.checked) {
+      const wrapper = target.closest('.a-checkbox, .a-checkbox__wrapper, label')
+        || target.parentElement;
+      displayWrapper = wrapper?.querySelector(
+        '.a-checkboxDisplay.-interactive, [data-cy-id="checkbox__display"]',
+      );
+      if (displayWrapper) displayWrapper.click();
+    }
+
+    if (!target.checked && displayWrapper) {
+      const opts = { bubbles: true, cancelable: true, composed: true };
+      try { displayWrapper.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch {}
+      try { displayWrapper.dispatchEvent(new MouseEvent("mousedown", opts)); } catch {}
+      try { displayWrapper.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
+      try { displayWrapper.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
+      try { displayWrapper.dispatchEvent(new MouseEvent("click", opts)); } catch {}
+    }
+
+    if (!target.checked) {
+      // Final fallback — directly set the property and emit framework events.
+      // React's controlled-component model may overwrite this on the next
+      // render, but it's worth a shot.
       target.checked = true;
       target.dispatchEvent(new Event("input", { bubbles: true }));
       target.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
-    // Display-wrapper fallback: a bare .click() is sometimes swallowed by
-    // RSI's React component. Dispatch a fuller pointer sequence as a backup
-    // (cheap — only fires once per page-load thanks to tickedDisclaimers).
-    if (target.tagName !== "INPUT" && !isCheckboxDisplayChecked(clickTarget)) {
-      const opts = { bubbles: true, cancelable: true, composed: true };
-      try { clickTarget.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch {}
-      try { clickTarget.dispatchEvent(new MouseEvent("mousedown", opts)); } catch {}
-      try { clickTarget.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
-      try { clickTarget.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
-      try { clickTarget.dispatchEvent(new MouseEvent("click", opts)); } catch {}
+    if (target.checked) {
+      tickedDisclaimers.add(target);
+      disclaimerStatus = "ticked: TOS";
+      const wrapper = target.closest('.a-checkbox, .a-checkbox__wrapper, label')
+        || target;
+      const prev = wrapper.style.outline;
+      wrapper.style.outline = "3px solid #00e676";
+      setTimeout(() => { wrapper.style.outline = prev; }, 700);
+      return true;
     }
 
-    tickedDisclaimers.add(target);
-    disclaimerStatus = "ticked: TOS";
-    // Visual flash on the click target.
-    const prev = clickTarget.style.outline;
-    clickTarget.style.outline = "3px solid #00e676";
-    setTimeout(() => { clickTarget.style.outline = prev; }, 700);
-    return true;
+    // State didn't change — leave target out of tickedDisclaimers so the
+    // next MutationObserver tick retries.
+    disclaimerStatus = "click did not register";
+    console.debug("[scr] TOS tick did not register; will retry on next mutation");
+    return false;
   }
   // ----------------------------------------------------------------------
 
