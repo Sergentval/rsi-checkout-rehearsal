@@ -229,6 +229,9 @@
     /^\s*validate\b/i,
     /^\s*complete\s+(order|purchase|checkout)\b/i,
     /^\s*review\s+order\b/i,
+    /^\s*i\s+agree\b/i,         // RSI's TOS-modal commit button
+    /^\s*agree\b/i,
+    /^\s*accept\b/i,
     // Detection of payment-commit-shaped buttons in non-English locales.
     // French (most common on RSI for European players).
     /^\s*valider\b/i,           // validate
@@ -238,6 +241,8 @@
     /^\s*payer\b/i,             // pay
     /^\s*finaliser\b/i,         // finalize / complete
     /^\s*passer\s+(?:la|au)\s+(?:commande|paiement)\b/i, // "place order"/"go to payment"
+    /^\s*j['']?\s*accepte\b/i,  // "I agree" (FR)
+    /^\s*accepter\b/i,          // "accept" (FR)
   ];
 
   // Subset that means "this click commits a purchase" — used to gate the
@@ -249,11 +254,16 @@
     /^\s*submit\b/i,
     /^\s*validate\b/i,
     /^\s*complete\s+(order|purchase|checkout)\b/i,
+    /^\s*i\s+agree\b/i,
+    /^\s*agree\b/i,
+    /^\s*accept\b/i,
     /^\s*valider\b/i,
     /^\s*confirmer\b/i,
     /^\s*payer\b/i,
     /^\s*finaliser\b/i,
     /^\s*passer\s+la\s+commande\b/i,
+    /^\s*j['']?\s*accepte\b/i,
+    /^\s*accepter\b/i,
   ];
 
   const PAYMENT_URL_HINTS = [/\/payment/i, /\/checkout\/payment/i, /\/confirm/i];
@@ -928,6 +938,19 @@
   }
 
   function findFlowButton() {
+    // 1. If a modal is open, prefer its primary footer button by stable
+    //    data-cy-id — RSI's "I agree" / "Confirm" / "OK" button on any
+    //    modal carries data-cy-id="modal_footer__primary_button". This
+    //    sidesteps locale + copy changes entirely.
+    const modalPrimary = document.querySelector(
+      'button[data-cy-id="modal_footer__primary_button"]:not([disabled])',
+    );
+    if (modalPrimary) {
+      const r = modalPrimary.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return modalPrimary;
+    }
+
+    // 2. Fall back to text-pattern matching across all visible CTAs.
     let best = null;
     let bestArea = 0;
     const cands = document.querySelectorAll(
