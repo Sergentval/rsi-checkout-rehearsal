@@ -260,6 +260,7 @@
   const STYLE_ID = "scr-style";
   const PANEL_ID = "scr-panel";
   const BANNER_ID = "scr-banner";
+  const BLOCK_TOAST_ID = "scr-block-toast";
 
   function injectStyle() {
     if (document.getElementById(STYLE_ID)) return;
@@ -415,6 +416,38 @@
         padding: 3px 6px; border-radius: 3px; letter-spacing: 0.04em;
         z-index: 1; pointer-events: none;
       }
+      #${BLOCK_TOAST_ID} {
+        position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
+        z-index: 2147483647;
+        background: rgba(20, 6, 8, 0.96); color: #fff;
+        border: 2px solid #ff3344; border-radius: 8px;
+        padding: 10px 44px 10px 14px;
+        min-width: 320px; max-width: 560px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.55), 0 0 0 4px rgba(255,51,68,0.18);
+        font: 13px/1.45 system-ui, sans-serif;
+        animation: scr-toast-in 180ms ease-out;
+      }
+      @keyframes scr-toast-in {
+        from { opacity: 0; transform: translate(-50%, -8px); }
+        to   { opacity: 1; transform: translate(-50%, 0); }
+      }
+      #${BLOCK_TOAST_ID}.scr-block-fading {
+        opacity: 0; transition: opacity 320ms ease-in;
+      }
+      #${BLOCK_TOAST_ID} .scr-block-title {
+        color: #ff8a93; font-weight: 700; font-size: 12px;
+        letter-spacing: 0.05em; text-transform: uppercase; margin-bottom: 3px;
+      }
+      #${BLOCK_TOAST_ID} .scr-block-reason { color: #fff; font-size: 13px; }
+      #${BLOCK_TOAST_ID} .scr-block-fix {
+        margin-top: 6px; color: #ffd166; font-size: 12px; line-height: 1.4;
+      }
+      #${BLOCK_TOAST_ID} .scr-block-close {
+        position: absolute; right: 6px; top: 4px;
+        background: transparent; color: #ff8a93; border: 0;
+        font: 700 18px/1 system-ui, sans-serif; cursor: pointer; padding: 2px 8px;
+      }
+      #${BLOCK_TOAST_ID} .scr-block-close:hover { color: #fff; }
     `;
     document.documentElement.appendChild(s);
   }
@@ -731,6 +764,17 @@
           panel.style.border = "2px solid #ff0033";
           setTimeout(() => { panel.style.border = prev; }, 700);
         }
+        const what = sel?.subtitle || sel?.title;
+        const reasonMsg = sel?.isPack
+          ? `Selected option is a PACK / BUNDLE${what ? ` (${what})` : ""}.`
+          : sel?.isUpgrade
+            ? `Selected option is an UPGRADE${what ? ` (${what})` : ""}.`
+            : "No STANDALONE SHIP option is currently selected.";
+        showBlockedToast(
+          `[${hotkeys.add.toUpperCase()}] Add to Cart blocked by "Lock to standalone ship"`,
+          reasonMsg,
+          `Press ${hotkeys.standalone.toUpperCase()} to switch to STANDALONE, or turn off "Lock to standalone ship" in the extension Options page.`,
+        );
         return false;
       }
     }
@@ -839,6 +883,61 @@
     if (b) b.remove();
     packBannerDismissed = false;
     packBannerCurrentShip = null;
+  }
+  // ----------------------------------------------------------------------
+
+  // ---------------- Blocked-action toast ------------------------------
+  // Prominent top-center alert shown when a hotkey is refused by a safety
+  // toggle (lockToStandalone, lockStoreCredit, enableFlowHotkey-off). The
+  // panel-pill "BLOCKED" + 700ms border flash are easy to miss in the heat
+  // of a wave — the toast spells out which setting blocked the action and
+  // how to unblock it. Auto-dismisses after 6s; replaceable on re-fire.
+  let blockToastTimer = null;
+  function showBlockedToast(title, reason, fix) {
+    const old = document.getElementById(BLOCK_TOAST_ID);
+    if (old) old.remove();
+    if (blockToastTimer) { clearTimeout(blockToastTimer); blockToastTimer = null; }
+
+    const t = document.createElement("div");
+    t.id = BLOCK_TOAST_ID;
+    t.setAttribute("role", "alert");
+    t.setAttribute("aria-live", "assertive");
+
+    const heading = document.createElement("div");
+    heading.className = "scr-block-title";
+    heading.textContent = `⛔ ${title}`;
+    t.appendChild(heading);
+
+    const body = document.createElement("div");
+    body.className = "scr-block-reason";
+    body.textContent = reason;
+    t.appendChild(body);
+
+    if (fix) {
+      const f = document.createElement("div");
+      f.className = "scr-block-fix";
+      f.textContent = `→ ${fix}`;
+      t.appendChild(f);
+    }
+
+    const close = document.createElement("button");
+    close.className = "scr-block-close";
+    close.textContent = "×";
+    close.title = "dismiss";
+    close.addEventListener("click", (e) => {
+      e.preventDefault();
+      if (blockToastTimer) { clearTimeout(blockToastTimer); blockToastTimer = null; }
+      t.remove();
+    });
+    t.appendChild(close);
+
+    document.body.appendChild(t);
+
+    blockToastTimer = setTimeout(() => {
+      t.classList.add("scr-block-fading");
+      setTimeout(() => { if (t.isConnected) t.remove(); }, 350);
+      blockToastTimer = null;
+    }, 6000);
   }
   // ----------------------------------------------------------------------
 
@@ -986,6 +1085,11 @@
     if (!settings.enableFlowHotkey) {
       flowStatus = "hotkey disabled (toggle in popup)";
       console.debug("[scr] N pressed but `enableFlowHotkey` is off");
+      showBlockedToast(
+        `[${hotkeys.next.toUpperCase()}] hotkey is disabled`,
+        "The Continue / Place Order hotkey is currently OFF — it's a safety toggle so a stray keypress can't commit a purchase.",
+        `Open the extension popup (or Options page) and enable "[N] hotkey: click Continue / Place Order".`,
+      );
       return false;
     }
     const btn = findFlowButton();
@@ -1032,6 +1136,11 @@
           panel.style.border = "2px solid #ff0033";
           setTimeout(() => { panel.style.border = prev; }, 700);
         }
+        showBlockedToast(
+          `[${hotkeys.next.toUpperCase()}] "${label}" blocked by "Lock to store credit"`,
+          "Store credit has not been applied to this order yet — the lock is refusing to commit the purchase.",
+          `Press ${hotkeys.max.toUpperCase()} to apply Max credit first, then press ${hotkeys.next.toUpperCase()} again. Or turn off "Lock to store credit" in the extension Options page to override.`,
+        );
         return false;
       }
     }

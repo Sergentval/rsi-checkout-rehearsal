@@ -18,6 +18,7 @@ the only thing here now.
 | Overlay panel                  | Live page state: ship, mode (warbond/credit), cart total, latency, locks |
 | Pack / standalone detection    | Red outline on PACKAGE bundles, green on STANDALONE SHIP    |
 | Pack-only banner               | Full-width alert when the bottom sheet has zero standalone offers |
+| Blocked-action toast           | Top-center alert when a safety toggle refuses a hotkey — names the toggle + tells you how to unblock |
 | Wave countdown                 | Local-time countdown to the next DefenseCon wave + per-ship status |
 | Pre-wave reminder              | Desktop notification 5 min before each wave (for scouted ships) |
 | Scout                          | Background service worker polls ship URLs, notifies on sold-out → available |
@@ -114,6 +115,22 @@ you can see your rate before committing.
 | Lock to store credit                   | `N` refuses Place Order until credit applied  | **off** |
 | Lock to standalone ship                | `A` refuses Add-to-Cart on PACKAGE/UPGRADE    | **off** |
 | Auto-tick TOS modal                    | Auto-tick the cart disclaimer checkbox        | **off** |
+
+## Blocked-action toast
+
+When a safety toggle refuses a hotkey, a red dismissible alert pops in at the
+top of the page. It names the toggle that did the refusing and tells you how
+to unblock the action — either by changing the page state (e.g. selecting
+STANDALONE first) or by turning off the toggle in the extension Options.
+
+Auto-dismisses after 6 seconds; click the `×` to dismiss earlier. Each new
+block replaces the previous toast. Triggered by:
+
+| Hotkey | Toggle that blocked it          | What to do                                            |
+| ------ | ------------------------------- | ----------------------------------------------------- |
+| `A`    | Lock to standalone ship         | Press `S` to switch to STANDALONE, or disable toggle  |
+| `N`    | `[N]` hotkey disabled           | Enable `[N] hotkey: click Continue / Place Order`     |
+| `N`    | Lock to store credit (on commit)| Press `M` to apply Max credit, or disable toggle      |
 
 ## Overlay panel
 
