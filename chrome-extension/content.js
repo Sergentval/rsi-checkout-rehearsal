@@ -502,13 +502,18 @@
   // Heuristic — matches by name/placeholder/aria-label/associated-label, all
   // case-insensitive. Returns the first plausible match or null. If RSI
   // changes the field shape, extend MATCHERS rather than rewriting callers.
-  function findStoreCreditInput() {
+  //
+  // `requireWritable` (default true) skips disabled/readonly inputs — those
+  // are useless for prefilling but are EXACTLY the state RSI puts the field
+  // into after credit has been applied, so isStoreCreditApplied() passes
+  // false to also surface that case.
+  function findStoreCreditInput({ requireWritable = true } = {}) {
     const MATCHERS = [/store.?credit/i, /apply.?credit/i, /credit.?amount/i];
     const inputs = document.querySelectorAll('input[type="text"], input[type="number"], input:not([type])');
     for (const el of inputs) {
       const rect = el.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue; // hidden
-      if (el.disabled || el.readOnly) continue;
+      if (requireWritable && (el.disabled || el.readOnly)) continue;
       const haystacks = [
         el.getAttribute("name"),
         el.getAttribute("placeholder"),
@@ -675,52 +680,112 @@
       })();
   }
 
+  // Detect whether a RSI display-wrapper checkbox is in the checked state.
+  // The state is communicated by either:
+  //   - a `-checked` class on the wrapper, OR
+  //   - aria-checked="true", OR
+  //   - the visible icon's class (rare — usually wrapper-driven via CSS).
+  // The wrapper always contains both .-checked and .-indeterminate icon
+  // spans; only one is rendered based on state — so the icon classes alone
+  // don't tell us anything.
+  function isCheckboxDisplayChecked(d) {
+    if (!d) return false;
+    if (d.classList.contains("-checked")) return true;
+    if (d.getAttribute("aria-checked") === "true") return true;
+    // Some variants put the state on the parent <label> / outer wrapper.
+    const parent = d.parentElement;
+    if (parent && parent.classList?.contains("-checked")) return true;
+    return false;
+  }
+
   function tryTickCartDisclaimer() {
     const modal = findCartDisclaimerModal();
     if (!modal) {
       disclaimerStatus = "—";
       return false;
     }
-    // Find the agreement checkbox (RSI uses .a-checkbox__input).
-    const inputs = modal.querySelectorAll('input[type="checkbox"]');
-    let target = null;
-    for (const cb of inputs) {
-      if (cb.checked) continue;
-      target = cb;
-      break;
+
+    // Two markup variants RSI has shipped:
+    //   LEGACY  — native <input type="checkbox"> inside .a-checkbox wrapper.
+    //   CURRENT — pure-div component, no native input:
+    //     <div class="a-checkboxDisplay a-checkbox__wrapper -interactive"
+    //          data-cy-id="checkbox__display">
+    //       <span class="a-checkboxDisplay__icon -checked …"><svg/></span>
+    //       <span class="a-checkboxDisplay__icon -indeterminate …"><svg/></span>
+    //     </div>
+    //   The checked state is on the wrapper itself (class `-checked` or
+    //   aria-checked). Both icon spans always exist; only one is rendered.
+
+    // 1) Legacy native-input path
+    const nativeInputs = [...modal.querySelectorAll('input[type="checkbox"]')];
+    const nativeUnchecked = nativeInputs.find((cb) => !cb.checked);
+
+    // 2) Current display-wrapper path
+    const displays = [...modal.querySelectorAll(
+      '.a-checkboxDisplay.-interactive, [data-cy-id="checkbox__display"]',
+    )];
+    const displayUnchecked = displays.find((d) => !isCheckboxDisplayChecked(d));
+
+    if (!nativeUnchecked && !displayUnchecked) {
+      // Either no checkbox at all, or all already ticked.
+      if (nativeInputs.length > 0 || displays.length > 0) {
+        disclaimerStatus = "already ticked";
+        return true;
+      }
+      disclaimerStatus = "no checkbox in modal";
+      return false;
     }
-    if (!target) {
-      disclaimerStatus = "already ticked";
-      return true;
+
+    // Choose the most reliable target. Prefer the native input when present
+    // so React/Vue controlled state stays in sync; otherwise click the
+    // visible display wrapper directly.
+    let target;
+    let clickTarget;
+    if (nativeUnchecked) {
+      target = nativeUnchecked;
+      const wrapper = target.closest('.a-checkbox, .a-checkbox__wrapper, label')
+        || target.parentElement || target;
+      clickTarget = wrapper.querySelector('.a-checkboxDisplay.-interactive, [data-cy-id="checkbox__display"]')
+        || wrapper.querySelector("label")
+        || wrapper;
+    } else {
+      target = displayUnchecked;
+      clickTarget = displayUnchecked;
     }
+
     if (tickedDisclaimers.has(target)) {
       disclaimerStatus = "ticked";
       return true;
     }
 
-    // RSI's checkbox is a custom component — the visible click target is
-    // .a-checkboxDisplay.-interactive (or the wrapping <label>). Clicking
-    // the input directly doesn't always fire RSI's controlled-component
-    // handler.
-    const wrapper = target.closest('.a-checkbox') || target.closest("label") || target;
-    const display = wrapper.querySelector(".a-checkboxDisplay.-interactive")
-      || wrapper.querySelector("label")
-      || wrapper;
-    display.click();
+    clickTarget.click();
 
-    // Some React setups need a native input event after the click.
-    if (!target.checked) {
+    // Native-input fallback: some forms don't pick up wrapper clicks. Force
+    // the underlying input state + emit input/change events.
+    if (target.tagName === "INPUT" && !target.checked) {
       target.checked = true;
       target.dispatchEvent(new Event("input", { bubbles: true }));
       target.dispatchEvent(new Event("change", { bubbles: true }));
     }
 
+    // Display-wrapper fallback: a bare .click() is sometimes swallowed by
+    // RSI's React component. Dispatch a fuller pointer sequence as a backup
+    // (cheap — only fires once per page-load thanks to tickedDisclaimers).
+    if (target.tagName !== "INPUT" && !isCheckboxDisplayChecked(clickTarget)) {
+      const opts = { bubbles: true, cancelable: true, composed: true };
+      try { clickTarget.dispatchEvent(new PointerEvent("pointerdown", opts)); } catch {}
+      try { clickTarget.dispatchEvent(new MouseEvent("mousedown", opts)); } catch {}
+      try { clickTarget.dispatchEvent(new PointerEvent("pointerup", opts)); } catch {}
+      try { clickTarget.dispatchEvent(new MouseEvent("mouseup", opts)); } catch {}
+      try { clickTarget.dispatchEvent(new MouseEvent("click", opts)); } catch {}
+    }
+
     tickedDisclaimers.add(target);
     disclaimerStatus = "ticked: TOS";
-    // Visual flash on the wrapper.
-    const prev = wrapper.style.outline;
-    wrapper.style.outline = "3px solid #00e676";
-    setTimeout(() => { wrapper.style.outline = prev; }, 700);
+    // Visual flash on the click target.
+    const prev = clickTarget.style.outline;
+    clickTarget.style.outline = "3px solid #00e676";
+    setTimeout(() => { clickTarget.style.outline = prev; }, 700);
     return true;
   }
   // ----------------------------------------------------------------------
@@ -1074,8 +1139,24 @@
     const txt = (document.body.innerText || "").toLowerCase();
     if (/store[-\s]?credit[^a-z$]{0,10}applied[^$]{0,20}\$\s*[1-9]/i.test(txt)) return true;
     if (/applied store[-\s]?credit[^$]{0,20}\$\s*[1-9]/i.test(txt)) return true;
+    // FR auto-translated checkout: "crédit appliqué", "crédit boutique appliqué".
+    if (/cr[éeè]dit[^a-z$€]{0,20}appliqu[ée]/i.test(txt)) return true;
     // Order total reached zero — credit fully covered the cart.
     if (/(?:order|grand)\s+total[^$]{0,12}\$\s*0(?:\.0{1,2})?\b/i.test(txt)) return true;
+    // Signal 4: order summary shows a negative store-credit line item
+    //   "Store Credit  -$50.00"  /  "Crédit boutique  -50,00 €"
+    if (/(?:store[-\s]?credit|cr[éeè]dit)[^$€\n]{0,30}[-−]\s*[$€]?\s*[1-9]/i.test(txt)) return true;
+    // Signal 5: the credit input is filled with a positive value AND has been
+    //   locked (disabled / readonly) — RSI's typical post-apply state. We
+    //   intentionally skip writable inputs here because a writable field with
+    //   a value can also mean "user typed an amount but didn't click Apply".
+    try {
+      const inp = findStoreCreditInput({ requireWritable: false });
+      if (inp && (inp.disabled || inp.readOnly)) {
+        const v = parseAmount(inp.value || "");
+        if (v != null && v > 0) return true;
+      }
+    } catch { /* ignore */ }
     return false;
   }
   let creditTouched = false; // set true when tryClickMaxCredit or tryPrefillStoreCredit succeeds
