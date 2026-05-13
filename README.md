@@ -1,568 +1,175 @@
-# sc-drop-watcher
-
-Personal Star Citizen drop notifier. **Read-only polling**, push to Discord +
-ntfy when something new appears. No authenticated calls, no purchase
-automation, nothing that touches a checkout flow — just a feed reader that
-gets you to the keyboard before everyone else.
-
-## Sources
-
-| Source         | Endpoint                                                              | Cadence | Signal                                                                              |
-| -------------- | --------------------------------------------------------------------- | ------- | ----------------------------------------------------------------------------------- |
-| `ship-matrix`  | `POST /ship-matrix/index`                                             | 5 min   | Datamined ship roster — fires on new ship ID **and** on `production_status` flips (concept ↔ flight-ready), the leak signal beyond "never seen before". |
-| `comm-link`    | `GET /en/comm-link/transmission`                                      | 60 s    | Authoritative drop signal — concept sales are announced here first.                 |
-| `pledge-store` | `GET /en/pledge/ships`                                                | 60 s    | Best-effort. Listing is JS-rendered, so plain-HTML scraping usually returns 0 SKUs. |
-| `calendar`     | hardcoded annual cadence (Invictus / Alien Week / CitizenCon / IAE / Luminalia) | 1 h | Heads-up ~24h before a known sale window opens, then again when it goes live and 24h before it closes. |
-
-The `comm-link` source is what actually catches new drops in real time. The
-`calendar` source covers "you forgot Invictus starts tomorrow" — useful for
-windows where concept reveals are likely. `ship-matrix` is the leak channel.
-
-## Watchlist
-
-The daemon detects every drop. The watchlist is the filter that decides which
-ones get a louder alert.
-
-Set `WATCHLIST` in `.env` to a comma-separated list of `ship:mode` pairs:
-
-```bash
-# Just the ship: alert on any version
-WATCHLIST=Polaris
-
-# Warbond only (fresh-money sale)
-WATCHLIST=Polaris:warbond
-
-# Store-credit allowed only (no warbond suffix in URL)
-WATCHLIST=Polaris:store-credit
-
-# Mixed: track several ships, each with its own preference
-WATCHLIST=Polaris:warbond,Idris:any,Galaxy:credit
-```
-
-Mode aliases: `warbond` = `wb`, `store-credit` = `credit` = `sc`, `any`
-(default).
-
-Match logic is case-insensitive substring search across the detection's
-title + URL. The warbond marker is the whole word `warbond` (won't trigger
-on e.g. "Warbondage"). When a match fires, the push is escalated:
-
-| Channel  | Normal drop                    | Watchlist match                                |
-| -------- | ------------------------------ | ---------------------------------------------- |
-| Discord  | green embed, `[DROP]` tag      | bright red embed, `[WATCH]` tag                |
-| ntfy     | priority `high`, tag `rocket`  | priority `max`, tag `rotating_light` (alarm)   |
-
-After editing `WATCHLIST` in `.env`, restart the service:
-`sudo systemctl restart sc-drop-watcher`. The startup log line shows the
-parsed watchlist so you can confirm it loaded correctly.
-
-## URL probe (for known ships that may re-stock)
-
-The watchlist matches against detections from comm-link posts and ship-matrix
-entries — that covers everything once CIG announces or adds the ship to
-their data. The URL probe is for the specific case where you already know a
-ship's canonical URL (because it's been sold before) and want to catch the
-moment its page flips from 404 back to 200 — i.e. RSI silently re-stocks a
-limited item without publishing a new comm-link post.
-
-### What the probe can and can't do
-
-| Scenario                                                | Right tool                            |
-| ------------------------------------------------------- | ------------------------------------- |
-| Unannounced ship like ODIN, you have no URL             | `WATCHLIST=ODIN:any` (no probe)       |
-| Re-stock of a known ship (e.g. Idris-K)                 | `PROBE_URLS=<its canonical url>`      |
-| Concept-sale announcement of any ship                   | watchlist or default `[DROP]` push    |
-
-You **cannot** probe an upcoming ship's URL — the URL isn't knowable until
-RSI publishes the ship-matrix entry, and at that point the existing
-ship-matrix detection already catches it (within 5 min, and with the
-correct canonical URL in the push because the daemon now reads RSI's own
-`.url` field).
-
-### Finding a canonical URL
-
-Visit the ship's page on `robertsspaceindustries.com`; the URL bar will show
-`https://robertsspaceindustries.com/pledge/ships/<mfr-slug>/<ship-slug>`.
-Or query ship-matrix directly:
-
-```bash
-curl -s -X POST https://robertsspaceindustries.com/ship-matrix/index \
-  -H "X-Requested-With: XMLHttpRequest" \
-  | jq '.data[] | select(.name | test("Idris"; "i")) | {name, url}'
-```
-
-### Configuration
-
-```bash
-PROBE_URLS=https://robertsspaceindustries.com/pledge/ships/aegis-dynamics/Idris-K,https://robertsspaceindustries.com/pledge/ships/aegis-dynamics/Javelin
-PROBE_INTERVAL_SEC=120
-```
-
-Status-transition logic:
-
-| Was      | Now      | Action                                                                                |
-| -------- | -------- | ------------------------------------------------------------------------------------- |
-| (first)  | any      | silent — just learn the baseline                                                      |
-| 4xx / -1 | 2xx      | **watchlist-priority push** ("URL went live: HTTP 404 → 200")                         |
-| 2xx      | 4xx      | removed-priority push ("page taken down")                                             |
-| same     | same     | silent                                                                                |
-
-The probe is targeted, not a scanner — list the exact URLs you care about,
-not categories. 120s default is the recommended floor; below ~60s starts
-to look rude on RSI's side.
-
-Restart the service after editing `PROBE_URLS`. Startup line includes
-`probe=N url(s) every Ns` so you can confirm it loaded.
-
-## Companion: checkout rehearsal (browser-side)
-
-Two equivalent flavors — pick one. Both run only on `robertsspaceindustries.com`
-and do exactly the same thing.
-
-What they do:
-
-- Outline buy/checkout buttons with a pulsing green/orange ring.
-- Show a small overlay with: page URL, buy-button count, store-credit balance
-  (parsed from page text), cart total, latency to RSI in ms, store-credit
-  autofill status.
-- On `/checkout/payment` (and `/payment` / `/confirm`), find the store-credit
-  amount input by name/placeholder/aria-label/surrounding-label and pre-fill
-  it with the cart total. Input flashes green when filled. **You still click
-  Apply and Place Order yourself.**
-- Hotkeys: **F** focus next buy button, **R** force refresh, **Esc** hide
-  the overlay.
-- On payment-shaped URLs, paint a red "slow down" banner so you don't
-  misclick under pressure.
-
-It does **not** click anything, submit anything, or fill payment-card fields.
-The store-credit autofill is the same UX category as a password manager
-filling a credit-card number — value goes in, human presses the button.
-
-### Option A: Chromium extension (recommended)
-
-`chrome-extension/` is a Manifest V3 extension. Load unpacked:
-
-1. Open `chrome://extensions/` (or `brave://extensions/`, `edge://extensions/`).
-2. Toggle **Developer mode** on (top right).
-3. **Load unpacked** → select `~/projects/sc-drop-watcher/chrome-extension/`.
-4. Open any RSI page. The bottom-right panel should appear within a second.
-5. Click the toolbar icon for a popup showing version + current-tab status +
-   hotkey reference.
-
-No build step. Edit `content.js`, hit the refresh icon next to the extension
-card on `chrome://extensions/` to reload.
-
-### Option B: Tampermonkey / Violentmonkey userscript
-
-`userscript/rsi-checkout-rehearsal.user.js` is the same logic without the
-extension chrome. Drag the file into Tampermonkey or Violentmonkey to install.
-Useful if you don't want a permanent extension entry in your browser, or if
-you're using a managed Chrome where extension loading is restricted.
-
-> The userscript is generated from `chrome-extension/content.js` plus
-> `userscript/header.txt` via `npm run build:userscript`. Edit `content.js`
-> (the source of truth), then regenerate. Don't hand-edit the userscript
-> file directly — your changes will be overwritten on the next build.
-
-### What the panel shows
-
-| Field          | Source                                                                        |
-| -------------- | ----------------------------------------------------------------------------- |
-| URL            | `location.pathname` (truncated to 32 chars)                                   |
-| Ship           | parsed from `/pledge/<category>/<slug>` URLs, with `-Warbond` stripped        |
-| Mode           | `WARBOND (fresh money)` if URL ends in `-Warbond`, else `Store credit OK`     |
-| Alt URL        | the toggled-warbond URL — clickable, present only on `/pledge/...` pages      |
-| Buy buttons    | count of visible Add-to-Cart-shaped buttons                                   |
-| Checkout       | count of visible Checkout / Place-Order / Pay-shaped buttons                  |
-| Store credit   | dollar amount near "store credit" text, parsed from page                      |
-| Total          | dollar amount near "total" / "order total" / "grand total", parsed from page  |
-| SC autofill    | regex-based fallback if RSI's Max button isn't on the page                    |
-| Max button     | did we find and click RSI's "apply max credit" button on a payment page?      |
-| Latency        | round-trip time of one HEAD request to RSI per refresh                        |
-
-Hotkeys: **V** view offers, **S** select standalone, **A** add to cart,
-**C** go to cart, **M** click Max credit, **N** click Continue / Place
-Order, **B** back, **R** force refresh, **Esc** hide / show the overlay.
-All hotkeys (except `Esc`) are rebindable in the settings page —
-click the toolbar icon → **Open settings page →**.
-
-### Waves — event-aware countdown + pre-wave reminder
-
-For events like **DefenseCon 2956** that drop limited ships in scheduled
-"waves" (one drop per ship per wave, capped at one purchase per account),
-the extension ships with the official schedule baked in:
-
-| Field             | Value (from the FAQ on 2026-05-11)                           |
-| ----------------- | ------------------------------------------------------------ |
-| Event             | DefenseCon 2956                                              |
-| Window            | May 14 16:00 UTC → May 27 20:00 UTC                          |
-| Wave times (UTC)  | 16:00, 20:00, 00:00, 04:00, 08:00, 12:00 (every 4 h)         |
-| May 14 release    | Drake Kraken, Drake Kraken Privateer                         |
-| May 20 release    | Aegis Idris-P, Aegis Javelin                                 |
-
-The overlay's **Waves** section reads:
-
-```
-WAVES
-Event           DefenseCon 2956
-State           [LIVE]
-Next wave       in 2h 14m → 18:00              ← local time, your locale
-Ship status     Idris-P · drops May 20, 18:00 (8d 2h)
-```
-
-Times are stored as UTC (matches RSI) but displayed in your **browser's
-local time** via `toLocaleString`. The countdown turns amber under 30 min
-and red under 5 min.
-
-A desktop notification fires **5 minutes before each wave** when at least
-one scouted ship is within its release date window:
-
-> Wave in 5 min — 2 ships active
-> Watching: Drake Kraken, Aegis Idris-P
-> Get ready — wave drops in 5 minutes.
-
-You can override the bundled config in the options page (Waves card —
-edit event name, start/end timestamps, wave times, ship list) for future
-events without waiting for an extension update.
-
-### Draggable overlay
-
-The panel's header is a drag handle — click and drag to move it anywhere
-on the page. Position persists across reloads via `chrome.storage.local`
-under `panelPosition`. Reset by clearing extension storage in
-`edge://extensions/` → the panel returns to its default bottom-right
-position on next page load.
-
-### Scout — browser-side ship-availability watcher
-
-The extension's MV3 service worker (`background.js`) polls a user-selected
-list of ships on a schedule and fires a desktop notification when a
-sold-out ship becomes available again. Set up in the options page →
-**Scout** card:
-
-- **Enable scout polling** — master on/off.
-- **Keep cart / checkout tabs alive** — marks `/cart` and `/checkout` tabs
-  as `autoDiscardable=false` so Chrome doesn't unload them mid-purchase.
-  Default on.
-- **Poll every** — interval. Two tiers:
-  - **Normal** (30 s / 1 m / 2 m / 5 m) uses `chrome.alarms` — low overhead, survives service-worker death.
-  - **Fast** (1.5 s / 3 s / 5 s / 10 s) uses `setInterval` inside the service worker. Politeness floor is **1.5 s**. The options page shows a live "~N requests/min total" warning so you can see your rate vs your scout list size before committing to it. If Chrome kills the idle SW, a 30 s heartbeat alarm restarts it.
-- **Search box** — type a ship name (matches the live ship-matrix), click
-  `+` to add to the scout list.
-- **Currently scouting** — per-row status dot (green = available, red =
-  sold out, amber = error, grey = first observation), last-check age,
-  `×` to remove.
-
-State transitions trigger `chrome.notifications`:
-
-| Was       | Is         | Action                                              |
-| --------- | ---------- | --------------------------------------------------- |
-| sold out  | available  | **Notification fires** (`<Ship> is BACK IN STOCK`, click to open) |
-| available | sold out   | Silent — only the status dot changes                |
-| error     | any        | Silent — error text shown in row tooltip            |
-| first run | any        | Silent — just learn baseline                        |
-
-Availability is detected by fetching the pledge URL (GET, no credentials)
-and looking for positive signals (`VIEW OFFERS` or `Add to cart` text)
-vs negative signals (`Sold out`, `Coming soon`, `Currently unavailable`).
-Ambiguous responses don't flip state — false positives are worse than a
-delayed alert.
-
-**Browser-side vs daemon-side**: this is the in-browser equivalent of
-the daemon's `PROBE_URLS` (in `.env`). Daemon runs 24/7 on your VPS and
-pushes Discord/ntfy; extension scout runs while your browser is open
-and fires desktop notifications. Use both for redundancy on the ships
-you really care about.
-
-### Settings page
-
-The settings page (`options.html`) is a full-tab UI for toggles, hotkey
-customisation, and reset. Open it via the popup's `Open settings page →`
-button, or right-click the extension icon → Options.
-
-- **Toggles** — same nine toggles as the popup but with descriptions and
-  spacing room. Toggles tagged `ALTERS PURCHASE FLOW` (currently the
-  `[N] hotkey` one) are highlighted so you don't enable them by accident.
-- **Hotkeys** — click any key (e.g. `F`) then press the new key. `Escape`
-  cancels rebinding. Duplicate keys are highlighted red — fix the
-  conflict or the script will fire the first match in F→M→N→A→C→S→R order.
-  `Reset hotkeys to defaults` restores `F/M/N/A/C/S/R`.
-- **Reset all** — wipes toggles + hotkeys + bookmarks. Asks first.
-
-Hotkeys are stored as `customHotkeys` in `chrome.storage.local`. The
-content script reads them on load and re-applies them on
-`chrome.storage.onChanged`, so rebinding takes effect on any open RSI
-tab without reload.
-
-### Toggles (extension only)
-
-Click the toolbar icon to open the popup. Six toggles control the script's
-features individually; settings persist via `chrome.storage.local` and apply
-instantly to any open RSI tab via `chrome.storage.onChanged`. All default on.
-
-| Toggle                              | What it controls                                          |
-| ----------------------------------- | --------------------------------------------------------- |
-| Show overlay panel                  | bottom-right info overlay (off → panel hidden, no work)   |
-| Highlight buy buttons               | pulsing green/orange button outlines                      |
-| Payment-page warning banner         | red "slow down" banner on `/checkout/payment`             |
-| Auto-click "Max credit" button      | clicks RSI's Max button once on payment-page entry        |
-| Store-credit input prefill          | regex-based fallback when RSI's Max button isn't present  |
-| Measure latency to RSI              | one HEAD request per refresh (off → no extra traffic)     |
-| [N] hotkey (default **off**)        | press `N` to click the page's primary Continue / Place Order |
-| Lock to store credit (default **off**) | `N` refuses to click Place Order until credit is applied |
-| Lock to standalone ship (default **off**) | `A` refuses to click Add-to-Cart if a pack is selected |
-
-There's also a **Reset to defaults** button that flips everything back to its
-default (everything on except the three lock/hotkey toggles).
-
-### The full keyboard-driven flow
-
-Each step is one keypress, one click. The script doesn't chain steps — if
-you stop pressing, the flow stops.
-
-| Stage                            | Press                          | Effect                                                                  |
-| -------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
-| Ship page                        | `V`                            | Click `VIEW OFFERS` — opens the bottom sheet                            |
-| Sheet open, pack-only ship       | `B`                            | Back to ship browse — escapes the page                                  |
-| Sheet open, standalone available | `S` (if not already selected)  | Switch selection to the cheapest STANDALONE SHIP                        |
-| Sheet open                       | `A`                            | Click `ADD TO CART` — gated by *Lock to standalone* if armed             |
-| After adding                     | `C`                            | Go to cart (header link or `/<locale>/pledge/cart`)                     |
-| In cart                          | `N`                            | Click Continue / Checkout                                               |
-| Address page                     | `N`                            | Click Continue (RSI's default address stays)                            |
-| Payment page                     | `M`                            | Click `Apply Max Credit`                                                |
-| Payment page                     | `N`                            | Click `Place Order` — gated by *Lock to store credit* if armed          |
-
-Total: 7–8 keypresses for a complete cart→done flow. Each press is your
-explicit decision; the panel's `Next step:` row tells you what to press
-next based on the page state.
-
-### Pack-only banner
-
-When a ship has no STANDALONE SHIP offer (e.g. an 890 Jump that's only sold
-inside Legatus and Praetorian bundles), the script paints a full-width
-amber banner across the top of the page:
-
-> ⚠ 890 Jump is sold ONLY as part of a pack. Press B to go back, or
-> disable "Lock to standalone" in the popup to buy a pack intentionally.
-
-The banner has a × close button if you want to hide it for this page-load.
-It re-appears the next time you open a pack-only ship's offers.
-
-### Add-to-cart helpers + pack/bundle detection
-
-On any ship-selection bottom sheet (RSI's `.c-optionsItemShip` cards),
-the script automatically:
-
-- **Outlines each option**: green for `STANDALONE SHIP`, amber for
-  `UPGRADE` (with badge `ℹ UPGRADE (requires source ship)`), red for
-  `PACKAGE` (with badge `⚠ PACK / BUNDLE`).
-- **Categorises via RSI's own title field** first — verified against the
-  live store, each `.c-optionsItemShip__title` reads exactly
-  `STANDALONE SHIP`, `UPGRADE`, or `PACKAGE`. Falls back to a keyword /
-  ship-count / price heuristic only for unrecognised titles (sale-specific
-  labels, legacy CCUs).
-- **Reports in the panel**: `Offers: 3 (1sa / 1up / 1pk)`,
-  `Selected: standalone: Aurora Mk II` (green) /
-  `Selected: PACK: Citizen Starter Pack` (red) /
-  `Selected: UPGRADE: ...` (amber).
-
-New hotkeys:
-
-| Key | Action                                                                              |
-| --- | ----------------------------------------------------------------------------------- |
-| `A` | Click `Add to cart` on the current bottom sheet (gated by `Lock to standalone`)     |
-| `S` | Switch selection to the cheapest standalone option (if one exists)                  |
-| `C` | Go to cart — clicks the header cart link or navigates to `/<locale>/pledge/cart`    |
-
-### Lock to standalone
-
-Off by default. When armed, the `A` hotkey **refuses** to click Add-to-Cart
-if the currently selected option is a pack. The panel `Standalone lock` row
-shows `OK: standalone selected` (green) vs `ARMED: blocks Add-to-Cart (pack
-selected)` (red). To buy a pack intentionally, flip the toggle off in the
-popup.
-
-This is the cart-side equivalent of `Lock to store credit` on the payment
-side — both refuse one specific commit click when a precondition isn't met.
-
-### Store-credit lock
-
-Off by default — flip it on if you want to **enforce** that every purchase
-uses store credit and not your card. When armed:
-
-- The `N` hotkey gates clicks on `Place Order` / `Confirm` / `Pay` buttons
-  on a check: is store credit actually applied?
-- Detection signals (any one counts as "applied"):
-  1. The script clicked RSI's Max-credit button this page-load.
-  2. The script prefilled the store-credit input (regex fallback).
-  3. Visible page text contains `"store credit applied: $X"` (X > 0) or the
-     order total reads `$0`.
-- If none of the above, `N` refuses to click and flashes the panel red.
-  The panel `SC lock` row shows `ARMED: blocks Place Order` (red) vs
-  `OK: credit applied` (green).
-- **Continue / Next / Checkout / Proceed clicks are unaffected** — the lock
-  only fires on the final commit button.
-
-To bypass once: turn the lock off in the popup and press `N`.
-
-### The N hotkey
-
-Off by default — flip it on in the popup if you want it.
-
-When armed, pressing `N` clicks **one** button on the current page: whichever
-visible button matches `Continue` / `Next` / `Proceed` / `Checkout` /
-`Place Order` / `Pay` / `Confirm`. The script picks the largest such button
-by area (RSI's primary CTAs are typically the biggest visible button), clicks
-it once, and flashes the click target orange. One keypress = one click.
-
-Typical flow with `N`:
-
-| Page              | Press | Effect                                          |
-| ----------------- | ----- | ----------------------------------------------- |
-| Cart              | `M`   | Clicks RSI's Max-credit button (already exists) |
-| Cart              | `N`   | Clicks Continue / Checkout to leave the cart    |
-| Address           | `N`   | Clicks Continue (default address pre-selected)  |
-| Payment           | `N`   | Clicks Place Order — your purchase is committed |
-
-Four keypresses for the full cart→done flow. Each `N` is a deliberate
-decision; the script does not chain steps automatically. If you stop pressing,
-the flow stops. The red "PAYMENT PAGE — slow down" banner still appears on
-the final page; consider reading it before pressing the last `N`.
-
-### Latency telemetry
-
-Time-critical actions (Max-credit click) run on a **microtask fast path**
-triggered by every DOM mutation, so they fire within milliseconds of the
-button appearing. The slower panel UI refresh is throttled to 250 ms and
-the periodic background refresh runs every 1.5 s. Highlight flashes after
-clicks were tuned down to 700 ms for snappier visual response.
-
-The overlay's **Latency** section shows three independently-measured
-numbers, each color-tiered:
-
-| Metric             | What it measures                                   | Green   | Amber       | Red      |
-| ------------------ | -------------------------------------------------- | ------- | ----------- | -------- |
-| Site (RTT)         | HEAD round-trip to the current page                | ≤100 ms | ≤300 ms     | >300 ms  |
-| Client (refresh)   | Time taken by the most recent `refresh()` call     | ≤5 ms   | ≤20 ms      | >20 ms   |
-| Last action        | Keydown → click + refresh complete (perceived feel) | ≤10 ms  | ≤50 ms      | >50 ms   |
-
-If `Site (RTT)` is red, you have a slow link / RSI is slow — neither
-fixable here. If `Client (refresh)` is red, the page has so many DOM nodes
-that scanning is expensive — possibly RSI rerendering during the refresh.
-If `Last action` is red but the other two are green, the bottleneck is
-in the click handler (RSI's React, not our code).
-
-### Where the script runs
-
-The content script attaches on every page of `robertsspaceindustries.com`
-**except the homepage** (`/`, `/en/`, `/fr/`, etc.). The homepage exclusion
-is in-script (not in the manifest) so SPA navigation between pages works
-without needing a page refresh — the script is already loaded, it just
-toggles the panel on/off as you move around the site.
-
-This keeps the panel visible on pledge, checkout, cart, account, Spectrum,
-comm-link, news, ship-matrix browse, and any other RSI page you visit. If
-you don't want the panel on a specific section, flip the `Show overlay panel`
-toggle off in the popup.
-
-### Ship lookup (in the overlay panel **and** the popup)
-
-Two equivalent UIs:
-
-- **In the overlay panel**: a collapsible `Ship lookup` section at the
-  bottom of the panel. Click the `[+]` header to expand. Search box +
-  bookmarked ships list. Click a ship name to open its canonical pledge
-  URL in a new tab. Star icon toggles bookmark. Works in both extension
-  and userscript flavor (bookmarks persisted via `chrome.storage.local`
-  or `localStorage` respectively).
-- **In the popup**: same data, fuller layout, persistent on toolbar click.
-
-- Type a name (e.g. `Polaris`, `Idris`, `Galaxy`) — case-insensitive, also
-  matches manufacturer name (`Aegis`, `Drake`).
-- Each result row shows: ship name, manufacturer, production status
-  (yellow pill for `in-concept` / `announced`, green for `flight-ready`).
-- `Open` opens the canonical pledge URL in a new tab.
-- `☆ / ★` toggles a bookmark — bookmarked ships appear at the top when the
-  search box is empty. Bookmarks persist in `chrome.storage.local`.
-
-On first install, bookmarks are seeded with the well-known limited-availability
-ships from prior RSI sales: `Idris`, `Javelin`, `Polaris`, `Pioneer`,
-`BMM` / `Banu Merchantman`, `Kraken`, `Galaxy`, `Liberator`, `Ironclad`,
-`Carrack`, `890 Jump`. You can star/unstar to customise.
-
-ship-matrix data is cached in `chrome.storage.local` for one hour; click
-`refresh` to force-pull the latest.
-
-The userscript flavor doesn't have access to `chrome.storage` — userscript
-users always get the defaults (everything on). If you need per-feature
-toggles, use the extension flavor.
+# RSI Checkout Rehearsal — Chromium / Edge extension
+
+Personal click-helper for the Roberts Space Industries pledge / cart /
+checkout flow. Highlights buy buttons, shows store-credit balance + cart
+total + latency, surfaces ship-availability info, gives rebindable hotkeys
+that fire one click per keypress. Never auto-submits a purchase chain —
+every committing click stays on you, just faster.
+
+This repo previously contained a Node.js / systemd daemon that polled RSI
+sources and pushed Discord/ntfy alerts. That side has been removed —
+external tools (like SC Tracker) cover the same need. The extension is
+the only thing here now.
+
+## What it does
+
+| Feature                        | Why it matters                                              |
+| ------------------------------ | ----------------------------------------------------------- |
+| Overlay panel                  | Live page state: ship, mode (warbond/credit), cart total, latency, locks |
+| Pack / standalone detection    | Red outline on PACKAGE bundles, green on STANDALONE SHIP    |
+| Pack-only banner               | Full-width alert when the bottom sheet has zero standalone offers |
+| Wave countdown                 | Local-time countdown to the next DefenseCon wave + per-ship status |
+| Pre-wave reminder              | Desktop notification 5 min before each wave (for scouted ships) |
+| Scout                          | Background service worker polls ship URLs, notifies on sold-out → available |
+| Cart / checkout keep-alive     | Marks those tabs `autoDiscardable=false` so Chrome doesn't unload them |
+| Draggable panel                | Click and drag the header; position persists                |
+| Hotkey-driven flow             | One key, one click — V → S → A → C → M → T → N             |
 
 ## Install
 
-```bash
-cd ~/projects/sc-drop-watcher
-npm install
-cp .env.example .env
-$EDITOR .env  # paste Discord webhook + ntfy topic, set LIVE=1 when ready
+The extension is **unpacked** (loaded from disk, not the Chrome Web Store).
+
+```
+git clone https://github.com/Sergentval/sc-drop-watcher.git
 ```
 
-## Test (dry run)
+Then in Edge / Chrome / Brave:
 
-```bash
-npm run dev
+1. Open `edge://extensions/` (or `chrome://extensions/`)
+2. Toggle **Developer mode** on (top right in Chrome, left sidebar in Edge)
+3. Click **Load unpacked** → select the `chrome-extension/` folder
+4. The extension appears in the toolbar. Click its icon for the popup.
+
+To update: `git pull` then click the refresh icon on the extension card.
+Hard-refresh any open RSI tab to pick up the new content script.
+
+## Hotkeys
+
+All rebindable in the options page (right-click icon → **Options**, or popup
+→ **Open settings page →**). One key = one click on a single button.
+
+| Key | Action                                                          |
+| --- | --------------------------------------------------------------- |
+| `V` | Click **VIEW OFFERS** on a ship page                            |
+| `S` | Select the **STANDALONE SHIP** option in the offer sheet        |
+| `A` | Click **Add to Cart**                                           |
+| `C` | Go to **Cart** (header link or `/<locale>/pledge/cart`)         |
+| `M` | Click **Apply Max Credit** on the payment page                  |
+| `T` | Tick the TOS checkbox in the cart disclaimer modal              |
+| `N` | Click **Continue / Place Order / I agree** — the page's primary "next" |
+| `B` | Go **Back** (escape a pack-only ship)                           |
+| `R` | Force-refresh the overlay panel                                 |
+| `Esc` | Hide / show the overlay (fixed, not rebindable)               |
+
+A typical run from ship page → completed purchase:
+
+```
+V → opens offers
+S → switches to STANDALONE SHIP if RSI defaulted to PACKAGE
+A → Add to Cart
+C → go to cart
+N → Continue to checkout
+N → Continue from address page
+M → Apply Max Credit on payment
+N → Place Order → disclaimer modal opens
+T → tick TOS checkbox (or leave auto-tick on)
+N → I agree → purchase commits
 ```
 
-Output is prefixed `[DRY]` and nothing is sent. Wait one minute to see one
-poll cycle of each source; first sync just learns IDs, no alerts.
+## Settings page
 
-## Run as a service
+Three cards:
 
-```bash
-sudo cp systemd/sc-drop-watcher.service /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now sc-drop-watcher
-journalctl -u sc-drop-watcher -f
+**Behaviour** — toggle each feature independently. Toggles that can complete
+a purchase or change the purchase flow are tagged `ALTERS PURCHASE FLOW`
+in red. All defaults are safe.
+
+**Hotkeys** — click any key cell, press the new key to rebind. `Escape`
+cancels. Duplicate keys show in red.
+
+**Reset** — wipes toggles + hotkeys + bookmarks (with confirm prompt).
+
+Plus dedicated cards:
+
+**Waves — event schedule** — edit the wave config (event name, window,
+daily wave times in UTC, limited-ships release dates). Defaults to the
+DefenseCon 2956 schedule scraped from the FAQ on 2026-05-11. Local-time
+preview shown next to each UTC field.
+
+**Scout** — enable polling, set interval (1.5s to 5min), pick which ships
+to watch. Sub-30s intervals show a live `~N requests/min` warning so
+you can see your rate before committing.
+
+## Toggles
+
+| Toggle                                 | What it controls                              | Default |
+| -------------------------------------- | --------------------------------------------- | ------- |
+| Show overlay panel                     | Bottom-right info panel                       | on      |
+| Highlight buy buttons                  | Pulsing green/orange outlines                 | on      |
+| Payment-page warning banner            | Red "slow down" banner on `/checkout/payment` | on      |
+| Auto-click "Max credit" button         | Click RSI's apply-max on payment-page entry   | on      |
+| Store-credit input prefill (fallback)  | Regex prefill when Max button isn't on page   | on      |
+| Measure latency to RSI                 | HEAD request per refresh                      | on      |
+| `[N]` hotkey: click Continue / Place Order | Required for the N hotkey to fire         | **off** |
+| Lock to store credit                   | `N` refuses Place Order until credit applied  | **off** |
+| Lock to standalone ship                | `A` refuses Add-to-Cart on PACKAGE/UPGRADE    | **off** |
+| Auto-tick TOS modal                    | Auto-tick the cart disclaimer checkbox        | **off** |
+
+## Overlay panel
+
+Sections (collapsible by section header):
+
+```
+PAGE        URL, Ship, Mode (Warbond/Credit), Alt URL
+OFFERS      Count breakdown, currently-selected option (red/amber/green pill)
+CHECKOUT    Buy buttons, Checkout, Store credit, Total
+ACTIONS     Max button, SC autofill, TOS modal, Flow, Cart, locks
+WAVES       Event, State (LIVE/before/ended), Next wave, Ship status
+LATENCY     Site (RTT), Client (refresh), Last action — color-tiered
+SHIP LOOKUP collapsible search + bookmarks
 ```
 
-### After upgrading Node via nvm
+The header is the drag handle — click and drag to move; position persists.
 
-The unit's `ExecStart` is pinned to the current nvm-managed node binary
-(`/home/ubuntu/.nvm/versions/node/v24.13.1/bin/node`) and invokes `tsx` via
-its in-repo entry point (`node_modules/tsx/dist/cli.mjs`). After any
-`nvm install` / `nvm use` that changes the active Node version:
+### Latency tiers
 
-1. Update both occurrences of the node path (in `systemd/sc-drop-watcher.service`
-   and the example above) to the new version.
-2. `sudo cp systemd/sc-drop-watcher.service /etc/systemd/system/`
-3. `sudo systemctl daemon-reload && sudo systemctl restart sc-drop-watcher`
-4. `journalctl -u sc-drop-watcher -n 30 --no-pager` — confirm `started`,
-   not `status=203/EXEC`.
+| Metric             | Green   | Amber       | Red      |
+| ------------------ | ------- | ----------- | -------- |
+| Site (RTT)         | ≤100 ms | ≤300 ms     | >300 ms  |
+| Client (refresh)   | ≤5 ms   | ≤20 ms      | >20 ms   |
+| Last action        | ≤10 ms  | ≤50 ms      | >50 ms   |
 
-If you forget step 1 and start the service anyway, the `ExecStartPre=` guard
-in the unit will log a clear message naming the missing binary, instead of
-the generic `status=203/EXEC`.
+## What the extension does NOT do
 
-## Push targets
+- Auto-submit any purchase chain (each commit click is a deliberate keypress)
+- Auto-fill credit-card or payment fields
+- Bypass captchas or anti-bot detection
+- Run on the RSI homepage (`/`, `/en/`, etc.) — only on pledge / checkout / cart / Spectrum / comm-link / account pages
 
-- **Discord**: rich embed with title, fields, link.
-- **ntfy**: high-priority push with click-through to the comm-link / SKU URL.
-  Use a private topic name (e.g. `https://ntfy.sh/sc-drop-<random>`); anything
-  on `ntfy.sh` is publicly readable if you know the topic.
+## Permissions
 
-## State
+Declared in `manifest.json`:
 
-JSON file at `STATE_FILE` (default `.state.json`). First poll of each source
-just learns IDs to avoid spamming you with the entire current catalog. Delete
-the file to force a fresh learn.
+| Permission         | Used by                                                  |
+| ------------------ | -------------------------------------------------------- |
+| `activeTab`        | Popup querying the current tab's host                    |
+| `storage`          | Persisting toggles, hotkeys, bookmarks, scout list, waves |
+| `alarms`           | Scout polling cadence, pre-wave reminder timing          |
+| `notifications`    | Scout "back in stock" + pre-wave alerts                  |
+| `tabs`             | Marking cart/checkout tabs non-discardable (keep-alive)  |
+| host: `robertsspaceindustries.com/*` | Content script + scout fetches      |
 
-## Tuning
+## Files
 
-During an active sale window:
-
-```bash
-POLL_PLEDGE_STORE_SEC=15 POLL_COMM_LINK_SEC=20 systemctl restart sc-drop-watcher
+```
+chrome-extension/
+├── manifest.json         MV3 manifest
+├── background.js         service worker — scout poll, keep-alive, pre-wave alarm
+├── content.js            DOM overlay panel + all hotkey handlers
+├── popup.html / popup.js toolbar popup (toggles + ship lookup)
+├── options.html / .css / .js  full-tab settings page (toggles, hotkeys, waves, scout)
+└── icons/                16/48/128 px placeholder icons
 ```
 
-Don't go below ~10s — RSI's ops will notice and you'll get rate-limited or
-blocked. The whole point of this tool is to be a polite, identifying client.
-The `User-Agent` is set to identify you with a contact email; keep that
-honest.
+No build step, no dependencies. Plain HTML/CSS/JS — edit, reload extension,
+done.
