@@ -46,8 +46,12 @@
     }
     const today = new Date(now); today.setUTCHours(0, 0, 0, 0);
     const baseMs = today.getTime();
+    // Sort chronologically — declaration order is [16,20,0,4,8,12] for
+    // readability, but the search must walk waves in time order or it skips
+    // earlier next-day waves (00:00 / 04:00 / 08:00 / 12:00) after 20:00 UTC.
+    const sortedTimes = [...waveConfig.waveTimesUtc].sort((a, b) => a - b);
     for (let dayOffset = 0; dayOffset < 2; dayOffset++) {
-      for (const minOff of waveConfig.waveTimesUtc) {
+      for (const minOff of sortedTimes) {
         const t = baseMs + dayOffset * 86_400_000 + minOff * 60_000;
         if (t > now && t <= waveConfig.endMs + 6 * 3_600_000) {
           return { state: "live", nextMs: t };
