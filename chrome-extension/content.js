@@ -416,6 +416,19 @@
         padding: 3px 6px; border-radius: 3px; letter-spacing: 0.04em;
         z-index: 1; pointer-events: none;
       }
+      .scr-opt-warbond {
+        outline: 3px solid #ff8a00 !important;
+        outline-offset: 2px !important;
+        box-shadow: 0 0 0 6px rgba(255, 138, 0, 0.20) !important;
+      }
+      .scr-opt-warbond::before {
+        content: "⚠ WARBOND · NO STORE CREDIT";
+        position: absolute; top: 6px; right: 6px;
+        background: #ff8a00; color: #111;
+        font: 700 10px/1 system-ui, sans-serif;
+        padding: 3px 6px; border-radius: 3px; letter-spacing: 0.04em;
+        z-index: 1; pointer-events: none;
+      }
       #${BLOCK_TOAST_ID} {
         position: fixed; top: 56px; left: 50%; transform: translateX(-50%);
         z-index: 2147483647;
@@ -596,6 +609,42 @@
     return [...document.querySelectorAll(".c-optionsItemShip")];
   }
 
+  // Detect whether an option card is Warbond-only (i.e. fresh-money only, NOT
+  // eligible for store credit). RSI marks these with the `c-optionItemDisclaimer`
+  // child carrying explanatory text ("This item cannot be acquired with Store
+  // Credit."), a `Warbond` tag, and `-disabled -disclaimer` modifier classes on
+  // the option card itself. We check all three signals (any one is enough) so
+  // copy changes / locale variations don't silently break the check.
+  //
+  // Issue #1 — when "Lock to store credit" is on, the [S] hotkey was happily
+  // picking the cheapest standalone even when that standalone was a Warbond
+  // variant the user could not actually buy with credit. Warbond-aware filtering
+  // gates that, and the panel/toast surface the reason.
+  const WARBOND_DISCLAIMER_PATTERNS = [
+    /cannot be acquired with store credit/i,             // EN
+    /ne peut pas être (?:acquis|obtenu) (?:avec|en) (?:du )?cr[ée]dit/i, // FR
+    /no se puede adquirir con cr[eé]dito/i,              // ES
+    /kann nicht mit (?:store-)?guthaben erworben werden/i, // DE
+  ];
+
+  function detectWarbondOption(el) {
+    const disclaimerEl = el.querySelector(".c-optionItemDisclaimer");
+    const disclaimerText = (disclaimerEl?.innerText || "").trim();
+    const tagText = (el.querySelector('[data-cy-id="tag__text"]')?.innerText || "").trim();
+
+    const disclaimerSaysNoCredit = WARBOND_DISCLAIMER_PATTERNS.some((re) => re.test(disclaimerText));
+    const tagSaysWarbond = /^warbond$/i.test(tagText);
+    const classSaysDisclaimer =
+      el.classList.contains("-disclaimer") || el.classList.contains("-disabled");
+
+    // -disabled alone isn't enough (RSI also disables out-of-stock cards), so
+    // require it to coincide with at least one explicit warbond/credit signal.
+    const isWarbond = disclaimerSaysNoCredit || tagSaysWarbond
+      || (classSaysDisclaimer && (disclaimerText.length > 0 || tagText.length > 0));
+
+    return { isWarbond, disclaimerText, tagText };
+  }
+
   function classifyShipOption(el) {
     const title = el.querySelector(".c-optionsItemShip__title")?.innerText.trim() ?? "";
     const subtitle = el.querySelector(".c-optionsItemShip__subtitle")?.innerText.trim() ?? "";
@@ -603,6 +652,7 @@
     const bodyItems = [...el.querySelectorAll(".c-optionsItemShip__bodyPledgeListContent p")]
       .map((p) => p.innerText.trim());
     const isSelected = el.classList.contains("-selected");
+    const { isWarbond, disclaimerText, tagText } = detectWarbondOption(el);
 
     // RSI labels each option's category in the title field — use it directly.
     // Verified live values: "STANDALONE SHIP", "UPGRADE", "PACKAGE".
@@ -633,28 +683,38 @@
       isUpgrade: category === "upgrade",
       isPack: category === "pack",
       isSelected,
+      isWarbond,                   // RSI says this option can't be bought with store credit
+      disclaimerText,
+      tagText,
     };
   }
 
   function analyzeShipOptions() {
     const opts = findShipOptions().map(classifyShipOption);
+    const standalone = opts.filter((o) => o.isStandalone);
     return {
       options: opts,
       hasOptions: opts.length > 0,
       selected: opts.find((o) => o.isSelected) ?? null,
-      standalone: opts.filter((o) => o.isStandalone),
+      standalone,
+      // Standalones the user can actually buy with store credit. Used when
+      // lockStoreCredit is on so [S] / [A] skip Warbond-only variants.
+      eligibleStandalone: standalone.filter((o) => !o.isWarbond),
+      warbonds: opts.filter((o) => o.isWarbond),
       upgrades: opts.filter((o) => o.isUpgrade),
       packs: opts.filter((o) => o.isPack),
     };
   }
 
   // Visual feedback: outline packs in red, upgrades in amber, standalone in
-  // green. Idempotent — class additions overwrite prior runs, no buildup.
+  // green, warbond in orange (with a "no store credit" tag). Idempotent —
+  // class additions overwrite prior runs, no buildup.
   function paintShipOptions(analysis) {
     for (const o of analysis.options) {
       o.el.classList.toggle("scr-opt-pack", o.isPack);
-      o.el.classList.toggle("scr-opt-standalone", o.isStandalone);
+      o.el.classList.toggle("scr-opt-standalone", o.isStandalone && !o.isWarbond);
       o.el.classList.toggle("scr-opt-upgrade", o.isUpgrade);
+      o.el.classList.toggle("scr-opt-warbond", o.isWarbond);
     }
   }
 
@@ -891,6 +951,32 @@
         return false;
       }
     }
+    // Issue #1 — when locked to store credit, refuse Add-to-Cart on a Warbond
+    // option even if it would otherwise pass lockToStandalone. The selected
+    // card itself declares it can't be paid with credit, so adding it leads
+    // straight to a payment-page dead-end.
+    if (settings.lockStoreCredit && analysis.hasOptions) {
+      const sel = analysis.selected;
+      if (sel?.isWarbond) {
+        const what = sel.subtitle || sel.title;
+        cartStatus = `BLOCKED: warbond selected${what ? ` (${what})` : ""}`;
+        const panel = document.getElementById(PANEL_ID);
+        if (panel) {
+          const prev = panel.style.border;
+          panel.style.border = "2px solid #ff0033";
+          setTimeout(() => { panel.style.border = prev; }, 700);
+        }
+        const hasEligible = analysis.eligibleStandalone.length > 0;
+        showBlockedToast(
+          `[${hotkeys.add.toUpperCase()}] Add to Cart blocked by "Lock to store credit"`,
+          `Selected option is a WARBOND pledge${what ? ` (${what})` : ""} — RSI does not allow store credit on this item.`,
+          hasEligible
+            ? `Press ${hotkeys.standalone.toUpperCase()} to switch to a store-credit-eligible STANDALONE, or turn off "Lock to store credit" to pay with fresh funds.`
+            : `No store-credit-eligible option is offered for this ship right now. Press ${hotkeys.back.toUpperCase()} to go back, or turn off "Lock to store credit" to pay with fresh funds.`,
+        );
+        return false;
+      }
+    }
     const btn = findAddToCartButton();
     if (!btn) { cartStatus = "no Add-to-Cart button on page"; return false; }
     btn.click();
@@ -907,12 +993,30 @@
       cartStatus = "no STANDALONE SHIP option on this sheet";
       return false;
     }
-    if (analysis.selected?.isStandalone) {
+    // Issue #1 — honor lockStoreCredit: only consider standalones the user can
+    // actually pay with credit. RSI marks Warbond standalones with a disclaimer
+    // ("This item cannot be acquired with Store Credit") which we now detect
+    // per-card. With the lock on, picking a Warbond standalone is never what
+    // the user wants — block the action and tell them why.
+    const pool = settings.lockStoreCredit ? analysis.eligibleStandalone : analysis.standalone;
+    if (settings.lockStoreCredit && pool.length === 0) {
+      const warbondCount = analysis.standalone.length - analysis.eligibleStandalone.length;
+      cartStatus = "BLOCKED: warbond-only — no store-credit-eligible standalone";
+      showBlockedToast(
+        `[${hotkeys.standalone.toUpperCase()}] Select STANDALONE blocked by "Lock to store credit"`,
+        warbondCount > 0
+          ? `Only WARBOND standalone${warbondCount === 1 ? " is" : "s are"} offered for this ship right now — RSI does not allow store credit on those.`
+          : "No store-credit-eligible STANDALONE option is on this sheet.",
+        `Press ${hotkeys.back.toUpperCase()} to go back, or turn off "Lock to store credit" in the extension Options page to pay with fresh funds.`,
+      );
+      return false;
+    }
+    if (analysis.selected?.isStandalone && pool.includes(analysis.selected)) {
       cartStatus = "already on standalone";
       return true;
     }
-    // Pick the cheapest standalone, click its title (the -isClickable element).
-    const target = [...analysis.standalone].sort((a, b) => a.priceNum - b.priceNum)[0];
+    // Pick the cheapest eligible standalone, click its title (the -isClickable element).
+    const target = [...pool].sort((a, b) => a.priceNum - b.priceNum)[0];
     const clickable = target.el.querySelector(".c-optionsItemShip__title.-isClickable, .c-optionsItemShip__subtitleContainer.-isClickable")
       || target.el;
     clickable.click();
@@ -1073,6 +1177,21 @@
     if (analysis.hasOptions) {
       if (analysis.standalone.length === 0) {
         return { msg: `⚠ Pack-only — press ${hotkeys.back.toUpperCase()} to go back`, kind: "bad" };
+      }
+      // Issue #1 — when locked to store credit, all visible standalones may be
+      // Warbond-only. The user can't proceed without disabling the lock or
+      // backing out, so steer them rather than suggesting [S].
+      if (settings.lockStoreCredit && analysis.eligibleStandalone.length === 0) {
+        return {
+          msg: `⚠ Warbond-only — store-credit lock will block [S]/[A]. Press ${hotkeys.back.toUpperCase()} to go back`,
+          kind: "bad",
+        };
+      }
+      if (settings.lockStoreCredit && analysis.selected?.isWarbond) {
+        return {
+          msg: `Press ${hotkeys.standalone.toUpperCase()} to switch off WARBOND (store-credit lock is on)`,
+          kind: "warn",
+        };
       }
       if (!analysis.selected?.isStandalone) {
         return {
@@ -1967,18 +2086,43 @@
       setText("scr-offers", "—");
       setPill("scr-selopt", "—", "muted");
     } else {
+      // Counts include a "wb" tally so the user sees at a glance whether the
+      // bottom sheet is offering Warbond variants (issue #1).
+      const wbCount = analysis.warbonds.length;
+      const wbSegment = wbCount > 0 ? ` / ${wbCount} wb` : "";
       setText(
         "scr-offers",
-        `${analysis.options.length} · ${analysis.standalone.length} sa / ${analysis.upgrades.length} up / ${analysis.packs.length} pk`,
+        `${analysis.options.length} · ${analysis.standalone.length} sa / ${analysis.upgrades.length} up / ${analysis.packs.length} pk${wbSegment}`,
       );
       const sel = analysis.selected;
-      const catKind = sel?.isPack ? "bad" : sel?.isUpgrade ? "warn" : sel?.isStandalone ? "ok" : "muted";
+      // Warbond + store-credit lock = bad combo, surface as red. Otherwise
+      // Warbond is just informational (orange).
+      const warbondBlocks = sel?.isWarbond && settings.lockStoreCredit;
+      const catKind = sel?.isPack
+        ? "bad"
+        : warbondBlocks
+          ? "bad"
+          : sel?.isWarbond
+            ? "warn"
+            : sel?.isUpgrade
+              ? "warn"
+              : sel?.isStandalone
+                ? "ok"
+                : "muted";
       const subtitle = (sel?.subtitle || sel?.title || "none").slice(0, 26);
-      const tag = sel?.isPack ? "PACK" : sel?.isUpgrade ? "UPGRADE" : sel?.isStandalone ? "standalone" : "?";
+      const baseTag = sel?.isPack
+        ? "PACK"
+        : sel?.isUpgrade
+          ? "UPGRADE"
+          : sel?.isStandalone
+            ? "standalone"
+            : "?";
+      const tag = sel?.isWarbond ? `${baseTag} · WARBOND` : baseTag;
       setPill("scr-selopt", `${tag} · ${subtitle}`, catKind);
     }
 
     if (!settings.lockStoreCredit) setPill("scr-lock", "off", "muted");
+    else if (analysis.selected?.isWarbond) setPill("scr-lock", "ARMED — warbond selected", "bad");
     else if (isStoreCreditApplied()) setPill("scr-lock", "OK applied", "ok");
     else setPill("scr-lock", "ARMED — blocks Place Order", "bad");
 
