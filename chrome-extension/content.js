@@ -926,13 +926,27 @@
   }
 
   let cartStatus = "—";
-  function tryClickAddToCart() {
+  function tryClickAddToCart(_retry = false) {
     const analysis = analyzeShipOptions();
     if (settings.lockToStandalone && analysis.hasOptions) {
       const sel = analysis.selected;
       // Strict: standalone only. Pack and Upgrade both blocked, with
       // different messages so the user knows what to do.
       if (!sel || !sel.isStandalone) {
+        // Issue #3 — after F5 during a wave drop the bottom sheet renders
+        // with no card pre-selected. If there's an eligible standalone on
+        // the sheet, auto-select it and retry once instead of blocking.
+        // (Pack/Upgrade-selected cases still block: switching off a user's
+        // deliberate selection would be wrong.)
+        if (!sel && !_retry) {
+          const pool = settings.lockStoreCredit ? analysis.eligibleStandalone : analysis.standalone;
+          if (pool.length > 0 && trySelectStandalone()) {
+            // RSI applies -selected asynchronously after the click; give it
+            // a tick before re-attempting. Recursion guarded by _retry.
+            setTimeout(() => tryClickAddToCart(true), 100);
+            return true;
+          }
+        }
         const reason = sel?.isPack ? "pack selected" : sel?.isUpgrade ? "upgrade selected" : "no standalone selected";
         cartStatus = `BLOCKED: ${reason}${sel ? ` (${sel.subtitle || sel.title})` : ""}`;
         const panel = document.getElementById(PANEL_ID);
