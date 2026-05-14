@@ -12,11 +12,24 @@ const PREWAVE_ALARM = "scr-prewave";
 const PREWAVE_LEAD_MIN = 5; // notification fires N minutes before each wave
 
 // Storage shape:
-//   scoutShips:        Array<{ id, name, url, lastAvailable, lastChecked, lastTransitionAt, lastError }>
+//   scoutShips:        Array<{ id, name, url, variant, lastAvailable, lastChecked, lastTransitionAt, lastError }>
+//                      variant is 'warbond' | 'standalone' — RSI ships two
+//                      separate pledge pages for the same ship during a sale
+//                      (the -Warbond suffix on the slug toggles between them),
+//                      and a ship can be available as one variant but
+//                      sold-out as the other. Old entries without `variant`
+//                      get one inferred from the URL on first poll.
 //   scoutEnabled:      boolean    (default true)
 //   scoutIntervalSec:  number     (default 30; min 1.5; ≥30 uses chrome.alarms,
 //                                  <30 uses setInterval inside the SW)
 //   keepAliveEnabled:  boolean    (default true) — non-discardable cart tabs
+
+// Infer a ship's purchase variant from its pledge URL. `/pledge/.../UTV-Warbond`
+// is the warbond version; `/pledge/.../UTV` is the store-credit version. Used
+// to backfill old scout entries that pre-date the variant field.
+function inferVariantFromUrl(url) {
+  return /-Warbond(\/?(?:[?#].*)?)?$/i.test(url || "") ? "warbond" : "standalone";
+}
 
 const DEFAULTS = {
   scoutShips: [],
@@ -190,6 +203,8 @@ async function pollAllScoutShips() {
   for (let i = 0; i < ships.length; i++) {
     const s = ships[i];
     if (!s?.url) continue;
+    // Backfill variant for pre-variant entries on first poll.
+    if (!s.variant) s.variant = inferVariantFromUrl(s.url);
     const result = await checkShipAvailability(s.url);
     const now = Date.now();
     const prev = s.lastAvailable;
@@ -244,10 +259,12 @@ async function checkShipAvailability(url) {
 
 async function fireBackInStockNotification(ship) {
   const notifId = `scr-scout-${ship.id ?? ship.url}-${Date.now()}`;
+  const variant = ship.variant || inferVariantFromUrl(ship.url);
+  const variantLabel = variant === "warbond" ? "WARBOND" : "store credit";
   await chrome.notifications.create(notifId, {
     type: "basic",
     iconUrl: "icons/icon-128.png",
-    title: `${ship.name} is BACK IN STOCK`,
+    title: `${ship.name} (${variantLabel}) is BACK IN STOCK`,
     message: `${ship.url}\nClick to open.`,
     priority: 2,
     requireInteraction: true,

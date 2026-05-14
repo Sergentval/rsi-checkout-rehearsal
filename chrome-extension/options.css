@@ -285,6 +285,44 @@ kbd {
 }
 .scout-search-results .row .add-btn:hover { background: rgba(109, 242, 169, 0.10); }
 .scout-search-results .row .add-btn.added { color: var(--weak); cursor: not-allowed; }
+.scout-search-results .row .add-btn-group {
+  display: flex; gap: 4px; flex: 0 0 auto;
+}
+.scout-search-results .row .add-btn-variant {
+  font-size: 11px; padding: 3px 7px; min-width: 38px; text-align: center;
+}
+.scout-search-results .row .add-btn-variant.variant-warbond {
+  color: #ff6b6b; border-color: rgba(255, 107, 107, 0.4);
+}
+.scout-search-results .row .add-btn-variant.variant-warbond:hover {
+  background: rgba(255, 107, 107, 0.10);
+}
+.scout-search-results .row .add-btn-variant.variant-standalone {
+  color: #6df2a9; border-color: rgba(109, 242, 169, 0.4);
+}
+.scout-search-results .row .add-btn-variant.variant-standalone:hover {
+  background: rgba(109, 242, 169, 0.10);
+}
+.scout-search-results .row .add-btn-variant.added {
+  color: var(--weak); border-color: var(--border2); background: transparent;
+}
+
+/* Variant pill in the scout list — matches the panel's mode color scheme. */
+.scout-row .name .variant-pill {
+  display: inline-block;
+  font: 600 9px/1.4 ui-monospace, Menlo, monospace;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 3px;
+  border: 1px solid currentColor;
+  vertical-align: 1px;
+}
+.scout-row .name .variant-pill.variant-warbond {
+  color: #ff6b6b; background: rgba(255, 107, 107, 0.10);
+}
+.scout-row .name .variant-pill.variant-standalone {
+  color: #6df2a9; background: rgba(109, 242, 169, 0.08);
+}
 
 .scout-list {
   border: 1px solid var(--border);

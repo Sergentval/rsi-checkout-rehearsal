@@ -239,6 +239,32 @@
 
   let scoutShipsCache = []; // ship-matrix listing
 
+  // RSI ships two pledge pages for the same hull during a warbond sale —
+  // /pledge/.../UTV is the store-credit version, /pledge/.../UTV-Warbond is
+  // the fresh-money version. The scout polls them independently so the
+  // user can be notified the moment either variant flips state. These
+  // helpers compute the URL for a given variant from the canonical ship-
+  // matrix URL (which is always the bare slug).
+  function urlForVariant(canonicalUrl, variant) {
+    if (!canonicalUrl) return null;
+    try {
+      const u = new URL(canonicalUrl);
+      const segments = u.pathname.replace(/\/$/, "").split("/");
+      const last = segments.pop();
+      if (!last) return canonicalUrl;
+      const bare = last.replace(/-Warbond$/i, "");
+      const newSlug = variant === "warbond" ? `${bare}-Warbond` : bare;
+      u.pathname = [...segments, newSlug].join("/");
+      return u.toString();
+    } catch {
+      return canonicalUrl;
+    }
+  }
+
+  function inferVariantFromUrl(url) {
+    return /-Warbond(\/?(?:[?#].*)?)?$/i.test(url || "") ? "warbond" : "standalone";
+  }
+
   async function loadMatrix(force = false) {
     if (!force) {
       const cached = await chrome.storage.local.get(MATRIX_CACHE_KEY);
@@ -309,6 +335,18 @@
       const name = document.createElement("span");
       name.className = "name";
       name.textContent = s.name || "(unknown ship)";
+
+      // Variant pill — distinguishes warbond from store-credit pages.
+      const variant = s.variant || inferVariantFromUrl(s.url);
+      const pill = document.createElement("span");
+      pill.className = `variant-pill variant-${variant}`;
+      pill.textContent = variant === "warbond" ? "WB" : "SC";
+      pill.title = variant === "warbond"
+        ? "Warbond (fresh money only)"
+        : "Standalone / store credit OK";
+      name.appendChild(document.createTextNode(" "));
+      name.appendChild(pill);
+
       const sub = document.createElement("span");
       sub.className = "sub";
       sub.textContent = s.url.replace(/^https?:\/\/[^/]+/, "");
@@ -354,7 +392,7 @@
       s.name.toLowerCase().includes(q) || s.manufacturer.toLowerCase().includes(q),
     ).slice(0, 20);
     meta.textContent = `${matches.length} match${matches.length === 1 ? "" : "es"}`;
-    const scouted = new Set((await getScoutShips()).map((x) => x.url));
+    const scoutedUrls = new Set((await getScoutShips()).map((x) => x.url));
     for (const s of matches) {
       const row = document.createElement("div");
       row.className = "row";
@@ -368,30 +406,46 @@
       mfr.textContent = s.manufacturer || "—";
       meta.appendChild(name);
       meta.appendChild(mfr);
-      const addBtn = document.createElement("button");
-      addBtn.className = "add-btn";
-      const already = s.url && scouted.has(s.url);
-      addBtn.textContent = already ? "✓" : "+";
-      if (already) addBtn.classList.add("added");
-      addBtn.disabled = !s.url || already;
-      addBtn.title = !s.url ? "no canonical URL — can't scout"
-                    : already  ? "already in scout list"
-                    : "Add to scout list";
-      addBtn.addEventListener("click", async () => {
-        if (!s.url || already) return;
-        const cur = await getScoutShips();
-        cur.push({
-          id: s.id, name: s.name, url: s.url,
-          addedAt: Date.now(), lastChecked: 0,
-          lastAvailable: null, lastTransitionAt: null, lastError: null,
-        });
-        await setScoutShips(cur);
-        renderScoutList();
-        renderScoutSearch(document.getElementById("scout-search").value);
-        toast(`scouting ${s.name}`);
-      });
       row.appendChild(meta);
-      row.appendChild(addBtn);
+
+      const btnGroup = document.createElement("div");
+      btnGroup.className = "add-btn-group";
+
+      // Render two add buttons — one per variant. Each derives its URL from
+      // the canonical ship-matrix URL by toggling the -Warbond slug suffix.
+      // A given ship can have one, both, or neither variant in the scout
+      // list; each variant is tracked independently with its own state.
+      for (const variant of ["warbond", "standalone"]) {
+        const variantUrl = urlForVariant(s.url, variant);
+        const already = variantUrl && scoutedUrls.has(variantUrl);
+        const btn = document.createElement("button");
+        btn.className = `add-btn add-btn-variant variant-${variant}`;
+        btn.textContent = already
+          ? (variant === "warbond" ? "✓ WB" : "✓ SC")
+          : (variant === "warbond" ? "+ WB" : "+ SC");
+        if (already) btn.classList.add("added");
+        btn.disabled = !variantUrl || already;
+        btn.title = !variantUrl
+          ? "no canonical URL — can't scout"
+          : already
+            ? `already scouting ${variant === "warbond" ? "warbond" : "standalone"}`
+            : `Scout ${variant === "warbond" ? "warbond" : "store-credit"} version`;
+        btn.addEventListener("click", async () => {
+          if (!variantUrl || already) return;
+          const cur = await getScoutShips();
+          cur.push({
+            id: s.id, name: s.name, url: variantUrl, variant,
+            addedAt: Date.now(), lastChecked: 0,
+            lastAvailable: null, lastTransitionAt: null, lastError: null,
+          });
+          await setScoutShips(cur);
+          renderScoutList();
+          renderScoutSearch(document.getElementById("scout-search").value);
+          toast(`scouting ${s.name} (${variant === "warbond" ? "WB" : "SC"})`);
+        });
+        btnGroup.appendChild(btn);
+      }
+      row.appendChild(btnGroup);
       root.appendChild(row);
     }
   }

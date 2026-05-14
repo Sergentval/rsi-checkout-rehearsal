@@ -98,7 +98,13 @@ DefenseCon 2956 schedule scraped from the FAQ on 2026-05-11. Local-time
 preview shown next to each UTC field.
 
 **Scout** — enable polling, set interval (1.5s to 5min), pick which ships
-to watch. Sub-30s intervals show a live `~N requests/min` warning so
+to watch. Each ship can be scouted as **warbond** (`+ WB`) or **standalone /
+store credit** (`+ SC`) independently — RSI serves separate pledge pages
+for the two purchase types (`/pledge/.../UTV-Warbond` vs `/pledge/.../UTV`)
+and a hull can be available on one and sold-out on the other. The scout
+list shows a `WB` / `SC` pill so you can see at a glance which variant
+each entry tracks, and back-in-stock notifications name the variant in
+the title. Sub-30s intervals show a live `~N requests/min` warning so
 you can see your rate before committing.
 
 ## Toggles
